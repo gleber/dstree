@@ -3,6 +3,14 @@ REBAR=$(shell which rebar || echo ./rebar)
 all: $(REBAR)
 	$(REBAR) compile
 
+tests:  $(REBAR)
+	$(REBAR) eunit
+
+sh: all
+	erl -pa ebin/ -eval 'shell_default:m(dstree).'
+
+
+
 # Detect or download rebar
 
 REBAR_URL=http://cloud.github.com/downloads/basho/rebar/rebar
