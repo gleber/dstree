@@ -1,0 +1,10 @@
+-record(dstree,
+        {id,
+         status = initial,
+         origin,
+         parent,
+         neighbors = orddict:new(),
+         children = orddict:new(),
+         dbg_fun,
+         report_fun,
+         send_fun = fun dstree:default_send/2}).

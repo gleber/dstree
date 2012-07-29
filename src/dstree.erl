@@ -1,30 +1,20 @@
 -module(dstree).
 
--export([new/2, process/2]). 
+-export([new/2, search/1, process/2, add_edge/2]).
+
+-export([default_send/2]).
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([server/2, search/1, dfs_loop/1]).
-
--record(dstree,
-        {id,
-         status = initial,
-         owner,
-         origin,
-         parent,
-         neighbors = [],
-         children = [],
-         dbg_fun,
-         report_fun,
-         send_fun = fun default_send/2}).
+-include_lib("dstree/include/dstree.hrl").
 
 default_send(X, M) ->
     erlang:send_after(crypto:rand_uniform(1, 100), X, {dstree, M}).
 
 random_test() ->
     L = [v1,v2,v3,v4,v5,v6,v7,v8],
-    %%[ register(X, spawn(dstree, test, [X, dstree_utils:random_pick(L)])) || X <- L ],
-    [ register(X, spawn(dstree, server, [X, L])) || X <- L ],
+    [ register(X, spawn(dstree, server, [X, dstree_utils:random_pick(L)])) || X <- L ],
+
     [ search(X) || X <- dstree_utils:random_pick(1, L) ],
     timer:sleep(1000),
     [ X ! stop || X <- L ].
@@ -55,41 +45,15 @@ basic_test() ->
     search(v3),
     timer:sleep(1000),
     [ X ! stop || X <- L ].
-%% v1 ! {forward, v1, [], v1},
-%% v2 ! {forward, v2, [], v2},
-%% v5 ! {forward, v5, [], v5}.
-%%,    v5 ! stop.
-
-server(I, Neighbors) ->
-    dfs_loop(dstree:new(I, Neighbors)).
 
 new(I, Neighbors) ->
     #dstree{status = initial,
-            owner = self(),
             id = I,
             parent = I,
-            neighbors = Neighbors,
-            children = []}.
+            neighbors = orddict:from_list(Neighbors)}.
 
-dfs_loop(State) ->
-    receive
-        stop ->
-            ok;
-        {dstree, Msg} ->
-            dstree:dfs_loop(dstree:process(Msg, State))
-    after 500 ->
-            dstree:dfs_loop(State)
-    end.
-
-wait(X) ->
-    Ref = make_ref(),
-    X ! {Ref,}
-
-search(X) ->
-    X ! {dstree, {forward, X, [], X}}.
-
-m(X, Y) ->
-    lists:usort(X ++ Y).
+search(#dstree{id = Id} = State) ->
+    process({dstree, {forward, Id, [], Id}}, State).
 
 process(Msg, #dstree{status = initial,
                      id = I,
@@ -102,12 +66,11 @@ process(Msg, #dstree{status = initial,
                                parent = Sender,
                                neighbors = m(Neighbors, Visited),
                                origin = Origin,
-                               children = []},
+                               children = orddict:new()},
                   [I | Visited]);
         report ->
-            io:fwrite("~s report: parent - ~s | ~p\n", [I, Parent, lists:usort(Neighbors)]),
-            State2 = broadcast(report, State),
-            State2;
+            io:fwrite("~s report: parent - ~s | ~p\n", [I, Parent, orddict:to_list(Neighbors)]),
+            broadcast(report, State);
         _Msg ->
             io:fwrite("~s unkown message ~p~n", [I, _Msg]),
             State
@@ -120,9 +83,8 @@ process(Msg, #dstree{status = waiting,
                      origin = Origin} = State) ->
     case Msg of
         report ->
-            io:fwrite("~s report: parent - ~s | ~p\n", [I, Parent, lists:usort(Neighbors)]),
-            State2 = broadcast(report, State),
-            State2;
+            io:fwrite("~s report: parent - ~s | ~p\n", [I, Parent, orddict:to_list(Neighbors)]),
+            broadcast(report, State);
         {return, Visited, X} when X == Origin ->
             io:fwrite("~s got return (~s)\n", [I, Origin]),
             check(State, Visited);
@@ -132,7 +94,7 @@ process(Msg, #dstree{status = waiting,
                     check(State#dstree{parent = Sender,
                                        neighbors = m(Neighbors,Visited),
                                        origin = MOrigin,
-                                       children = []},
+                                       children = orddict:new()},
                           [I | Visited]);
                true ->
                     io:fwrite("~s ignores ~s (~s)\n", [I, Sender, Origin]),
@@ -163,23 +125,21 @@ check(#dstree{id = I,
         [J | _] ->
             State2 = do_send({forward, I, Visited, Origin}, J, State),
             State2#dstree{status = waiting,
-                          children = [J | Children]}
+                          children = m(Children, [J])}
     end.
 
 
 broadcast(M, #dstree{children = Children} = State) ->
     lists:foldl(fun(X, S) ->
                         do_send(M, X, S)
-                end, State, shuffle(Children)).
+                end, State, dstree_utils:shuffle(orddict:to_list(Children))).
 
 do_send(M, X, #dstree{send_fun = SF} = State) ->
     SF(X, M),
     State.
 
-shuffle(List) -> shuffle(List, []).
+add_edge(Node, #dstree{neighbors = N} = State) ->
+    State#dstree{neighbors = m(N, [Node])}.
 
-shuffle([], Acc) -> Acc;
-
-shuffle(List, Acc) ->
-    {Leading, [H | T]} = lists:split(random:uniform(length(List)) - 1, List),
-    shuffle(Leading ++ T, [H | Acc]).
+m(X, Y) ->
+    orddict:merge(X, orddict:from_list(Y)).
