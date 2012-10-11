@@ -11,33 +11,22 @@
 default_send(X, M) ->
     erlang:send_after(crypto:rand_uniform(1, 100), X, {dstree, M}).
 
-random_tree(G, [R|L] = V) ->
-    [V1] = dstree_utils:random_pick(1, L),
-    digraph:add_edge(G, R, V1),
-    random_tree(G, V, 0).
+random_tree(G, [R|L]) ->
+    random_tree(G, [R], dstree_utils:shuffle(L)).
 
-random_tree(G, [Root|Rest] = V, N) ->
-    case {lists:all(fun(X) ->
-                            digraph:get_path(G, Root, X) /= false
-                    end, Rest), N} of
-        {true, _} ->
-            io:format("READY in ~p attempts~n", [N]),
-            ok;
-        {_, 10000} ->
-            io:format("Not ready in ~p attempts~n", [N]),
-            ok;
-        {false, _} ->
-            [V1, V2] = dstree_utils:random_pick(2, V),
-            case {digraph:get_path(G, Root, V1),
-                  digraph:get_path(G, Root, V2),
-                  digraph:get_path(G, V1, V2)} of
-                {false, false, false} -> 
-                    digraph:add_edge(G, V1, V2);
-                _ ->
-                    ok
-            end,
-            random_tree(G, V, N+1)
-    end.
+random_tree(G, _Visited, []) ->
+    G;
+
+random_tree(G, Visited, [V2|R]) ->
+    [V1] = dstree_utils:random_pick(1, Visited),
+    digraph:add_edge(G, V1, V2),
+    random_tree(G, [V2|Visited], R).
+
+is_connected(G, Root) ->
+    Vertices = digraph:vertices(G) -- [Root],
+    lists:all(fun(X) ->
+                      digraph:get_path(G, Root, X) /= false
+              end, Vertices).
 
 print_graph(G) ->
     V = lists:sort(digraph:vertices(G)),
@@ -45,6 +34,28 @@ print_graph(G) ->
           N = lists:sort(digraph:out_neighbours(G, X)),
           io:format("~p -> ~p~n", [X, N])
       end || X <- V ].
+
+print_graph_paths(G, Root) ->
+    V = lists:sort(digraph:vertices(G)),
+    [ begin
+          N = digraph:get_path(G, Root, X),
+          io:format("~p -> ~p~n", [X, N])
+      end || X <- V ].
+
+random_tree_test() ->
+    [ begin
+          DG = digraph:new([acyclic]),
+          L = lists:seq(1000, 1015),
+          lists:map(digraph:add_vertex(DG, _), L),
+          random_tree(DG, L),
+          case is_connected(DG, hd(L)) of
+              true -> ok;
+              false ->
+                  print_graph_paths(DG, hd(L)),
+                  ?assertEqual(true, false)
+          end,
+          digraph:delete(DG)          
+      end || _ <- lists:seq(1, 100) ].
 
 random_test() ->
     DG = digraph:new([acyclic]),
@@ -66,7 +77,7 @@ random_test() ->
     %% [ X ! stop || X <- L ],
     ok.
 
-basic_test() ->
+basic_test_disabled() ->
     L = [v1,v2,v3,v4,v5,v6,v7,v8],
     register(v1,
              spawn(dstree, server, [v1, [v2, v3]])),
