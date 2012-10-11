@@ -11,13 +11,60 @@
 default_send(X, M) ->
     erlang:send_after(crypto:rand_uniform(1, 100), X, {dstree, M}).
 
-random_test() ->
-    L = [v1,v2,v3,v4,v5,v6,v7,v8],
-    [ register(X, spawn(dstree, server, [X, dstree_utils:random_pick(L)])) || X <- L ],
+random_tree(G, [R|L] = V) ->
+    [V1] = dstree_utils:random_pick(1, L),
+    digraph:add_edge(G, R, V1),
+    random_tree(G, V, 0).
 
-    [ search(X) || X <- dstree_utils:random_pick(1, L) ],
-    timer:sleep(1000),
-    [ X ! stop || X <- L ].
+random_tree(G, [Root|Rest] = V, N) ->
+    case {lists:all(fun(X) ->
+                            digraph:get_path(G, Root, X) /= false
+                    end, Rest), N} of
+        {true, _} ->
+            io:format("READY in ~p attempts~n", [N]),
+            ok;
+        {_, 10000} ->
+            io:format("Not ready in ~p attempts~n", [N]),
+            ok;
+        {false, _} ->
+            [V1, V2] = dstree_utils:random_pick(2, V),
+            case {digraph:get_path(G, Root, V1),
+                  digraph:get_path(G, Root, V2),
+                  digraph:get_path(G, V1, V2)} of
+                {false, false, false} -> 
+                    digraph:add_edge(G, V1, V2);
+                _ ->
+                    ok
+            end,
+            random_tree(G, V, N+1)
+    end.
+
+print_graph(G) ->
+    V = lists:sort(digraph:vertices(G)),
+    [ begin
+          N = lists:sort(digraph:out_neighbours(G, X)),
+          io:format("~p -> ~p~n", [X, N])
+      end || X <- V ].
+
+random_test() ->
+    DG = digraph:new([acyclic]),
+    
+    L = [ root | [ list_to_atom("v"++integer_to_list(X)) || X <- lists:seq(1, 15) ] ],
+
+    lists:map(digraph:add_vertex(DG, _), L),
+    print_graph(DG),
+
+    random_tree(DG, L),
+    print_graph(DG),
+
+    digraph:delete(DG),
+    
+    %% [ register(X, spawn(dstree, server, [X, dstree_utils:random_pick(L)])) || X <- L ],
+
+    %% [ search(X) || X <- dstree_utils:random_pick(1, L) ],
+    %% timer:sleep(1000),
+    %% [ X ! stop || X <- L ],
+    ok.
 
 basic_test() ->
     L = [v1,v2,v3,v4,v5,v6,v7,v8],
