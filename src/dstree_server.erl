@@ -54,7 +54,6 @@ handle_info(_Msg, State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-op(Op, Args, State) ->
-    DStree0 = ?s.dstree,
-    DStree = apply(dstree, Op, Args ++ [DStree0]),
+op(Op, Args, #state{dstree = DS0} = State) ->
+    DStree = apply(dstree, Op, Args ++ [DS0]),
     ?s{dstree = DStree}.

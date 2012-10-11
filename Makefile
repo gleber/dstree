@@ -1,7 +1,7 @@
 REBAR=$(shell which rebar || echo ./rebar)
 
 all: $(REBAR)
-	$(REBAR) compile
+	$(REBAR) get-deps compile
 
 tests:  $(REBAR)
 	$(REBAR) eunit
