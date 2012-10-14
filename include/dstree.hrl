@@ -3,8 +3,10 @@
          status = initial,
          origin,
          parent,
-         neighbors = orddict:new(),
-         children = orddict:new(),
+         neighbors = ordsets:new(),
+         children = ordsets:new(),
+         subtree = orddict:new(),
+         tree,
          dbg_fun,
          report_fun,
          send_fun = fun dstree:default_send/2}).

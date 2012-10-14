@@ -26,6 +26,14 @@ print_graph(G) ->
           io:format("~p -> ~p~n", [X, N])
       end || X <- V ].
 
+get_tree(Root, G) ->
+    V = [Root | lists:sort(digraph:vertices(G)) -- [Root]],
+    Out = [ {X, digraph:out_neighbours(G, X)} || X <- V ],
+    build_tree(V).
+
+build_tree([X|V]) ->
+    ok.
+
 print_graph_paths(G, Root) ->
     V = lists:sort(digraph:vertices(G)),
     [ begin
@@ -64,16 +72,26 @@ random_test() ->
     lists:map(digraph:add_vertex(DG, _), L),
 
     random_tree(DG, L),
-    [ add_random_edge(DG) || _ <- lists:seq(1, 20) ],
+
+    STree = get_tree(root, DG),
+    
+    %% [ add_random_edge(DG) || _ <- lists:seq(1, 20) ],
     print_graph(DG),
 
-    digraph:delete(DG),
+    [ begin
+          {ok, P} = dstree_server:start(self(), X, []),
+          register(X, P)
+      end || X <- L ],
 
-    %% [ register(X, spawn(dstree, server, [X, dstree_utils:random_pick(L)])) || X <- L ],
+    [ dstree_server:add_edges(X, digraph:out_neighbours(DG, X)) || X <- L ],
 
-    %% [ search(X) || X <- dstree_utils:random_pick(1, L) ],
-    %% timer:sleep(1000),
-    %% [ X ! stop || X <- L ],
+    dstree_server:search(root),
+    %% [ dstree_server:search(X) || X <- dstree_utils:random_pick(1, L) ],
+
+    timer:sleep(5000),
+    
+    [ dstree_server:stop(X) || X <- L ],
+    
     ok.
 
 basic_test_disabled() ->

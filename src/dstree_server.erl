@@ -1,7 +1,7 @@
 -module(dstree_server).
 -behaviour(gen_server).
 
--export([start/2, search/1]).
+-export([start/2, start/3, add_edge/2, add_edges/2, search/1, stop/1]).
 
 -export([init/1,
          handle_call/3,
@@ -12,23 +12,51 @@
 
 -include_lib("dstree/include/dstree.hrl").
 
+%%
+%% API
+%%
+
+start(Owner, Opts) ->
+    gen_server:start_link(dstree_server, [Owner, Opts], []).
+
+start(Owner, Id, Opts) ->
+    gen_server:start_link(dstree_server, [Owner, Id, Opts], []).
+
+stop(Ref) ->
+    gen_server:call(Ref, stop).
+
+search(Ref) ->
+    gen_server:cast(Ref, search).
+
+add_edge(Ref, Neighbor) ->
+    gen_server:call(Ref, {add_edge, Neighbor}).
+
+add_edges(Ref, Neighbors) ->
+    gen_server:call(Ref, {add_edges, Neighbors}).
+
+%%
+%% Callbacks
+%%
 -record(state, {owner :: pid(),
                 dstree :: #dstree{}}).
 
 -define(s, State#state).
 
-start(Owner, Neighbors) ->
-    gen_server:start_link(dstree_server, [Owner, Neighbors]).
-
-search(Ref) ->
-    gen_server:cast(Ref, search).
-
-init([Owner, Neighbors]) ->
+init([Owner, Id, Opts]) ->
     {ok, #state{owner = Owner,
-                dstree = dstree:new(self(), Neighbors)}}.
+                dstree = dstree:new(Id, Opts)}};
+init([Owner, Opts]) ->
+    {ok, #state{owner = Owner,
+                dstree = dstree:new(self(), Opts)}}.
 
 terminate(_Reason, _State) ->
     ok.
+
+handle_call(stop, _From, State) ->
+    {stop, normal, ok, State};
+
+handle_call({add_edges, N}, _From, State) ->
+    {reply, ok, op(add_edges, [N], State)};
 
 handle_call({add_edge, N}, _From, State) ->
     {reply, ok, op(add_edge, [N], State)};
