@@ -7,7 +7,7 @@ tests:  $(REBAR)
 	$(REBAR) eunit
 
 sh: all
-	erl -pa ebin/ -eval 'shell_default:m(dstree).'
+	erl -pa ebin/ -run reloader -eval 'shell_default:m(dstree).'
 
 
 
