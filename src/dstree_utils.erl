@@ -7,7 +7,7 @@ shuffle(List) -> shuffle(List, []).
 shuffle([], Acc) -> Acc;
 
 shuffle(List, Acc) ->
-    {Leading, [H | T]} = lists:split(random:uniform(length(List)) - 1, List),
+    {Leading, [H | T]} = lists:split(crypto:rand_uniform(0, length(List)), List),
     shuffle(Leading ++ T, [H | Acc]).
 
 
