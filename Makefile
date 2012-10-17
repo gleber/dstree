@@ -4,11 +4,12 @@ all: $(REBAR)
 	$(REBAR) get-deps compile
 
 tests:  $(REBAR)
-	$(REBAR) eunit
+	$(REBAR) eunit skip_deps=true suite=dstree
 
 sh: all
 	erl -pa ebin/ -run reloader -eval 'shell_default:m(dstree).'
 
+test: tests
 
 
 # Detect or download rebar
