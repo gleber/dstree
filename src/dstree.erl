@@ -5,16 +5,16 @@
 -export([default_send/2, default_report/1]).
 
 -include_lib("dstree/include/dstree.hrl").
+-include_lib("dstree/include/dstree_dev.hrl").
 
--record(forward,  {origin, sender, visited}).
--record(finished, {origin, tree}).
--record(return,   {origin, sender, subtree, visited}).
+%% -define(DBG(Format, Args), io:fwrite(user, "~p:~p -- " ++ Format ++ "~n", [?MODULE, ?LINE] ++ Args)).
+-define(DBG(Format, Args), ok).
 
 default_send(X, M) ->
     erlang:send_after(crypto:rand_uniform(1, 100), X, {dstree, M}).
 
 default_report(State) ->
-    io:format("~p state: ~p~n", [self(), State]).
+    ?DBG("~p state: ~p", [self(), State]).
 
 new(I, Opts) ->
     Neighbors = proplists:get_value(neighbors, Opts, []),
@@ -47,7 +47,7 @@ process(Msg, #dstree{status = initial,
                      neighbors = Neighbors} = State) ->
     case Msg of
         #forward{origin= Origin, sender = Sender, visited = Visited} ->
-            io:fwrite("~p got forward (~p)\n", [I, Origin]),
+            ?DBG("~p got forward (~p)", [I, Origin]),
             check(State#dstree{status = waiting,
                                parent = Sender,
                                neighbors = m(Neighbors, Visited),
@@ -57,7 +57,7 @@ process(Msg, #dstree{status = initial,
                                children = ordsets:new()},
                   m(Visited, [I]));
         _Msg ->
-            io:fwrite("~p unkown message ~p~n", [I, _Msg]),
+            ?DBG("~p unkown message ~p", [I, _Msg]),
             State
     end;
 
@@ -69,20 +69,20 @@ process(Msg, #dstree{status = waiting,
                      origin = Origin} = State) ->
     case Msg of
         #return{origin = X, visited = Visited, subtree = ReturnSubtree} when X == Origin ->
-            io:fwrite("~p got return (~p)\n", [I, Origin]),
+            ?DBG("~p got return (~p)", [I, Origin]),
             Subtree2 = merge_subtree(Children, Subtree, ReturnSubtree),
             State2 = State#dstree{subtree = Subtree2},
             check(State2, Visited);
         #forward{origin = MOrigin, sender = Sender, visited = Visited} ->
             if MOrigin > Origin orelse Origin == undefined ->
-                    io:fwrite("~p got forward (~p)\n", [I, MOrigin]),
+                    ?DBG("~p got forward (~p)", [I, MOrigin]),
                     check(State#dstree{parent = Sender,
                                        neighbors = m(Neighbors,Visited),
                                        origin = MOrigin,
                                        children = ordsets:new()},
                           [I | Visited]);
                true ->
-                    io:fwrite("~p ignores ~p (~p =< ~p)\n", [I, Sender, MOrigin, Origin]),
+                    ?DBG("~p ignores ~p (~p =< ~p)", [I, Sender, MOrigin, Origin]),
                     State#dstree{neighbors = m(Neighbors,Visited)}
             end;
         #finished{origin = X, tree = Tree} = Msg when X == Origin ->
@@ -115,7 +115,7 @@ check(#dstree{id = I,
         [] ->
             if I == Parent -> %% building a tree is done, we are the root!
                     Tree = {I, Subtree},
-                    io:format("~nFinal spanning tree: ~p~n~n", [Tree]),
+                    ?DBG("~nFinal spanning tree: ~p~n~n", [Tree]),
                     State2 = broadcast(#finished{origin = Origin, tree = Tree}, State),
                     State3 = State2#dstree{status = initial, tree = Tree},
                     report(State3);
@@ -128,7 +128,7 @@ check(#dstree{id = I,
                     State2#dstree{status = waiting}
             end;
         [J | _] ->
-            io:format("~p is not done: ~p - ~p = ~p~n", [I, Neighbors, Visited, Unvisited]),
+            ?DBG("~p is not done: ~p - ~p = ~p~n", [I, Neighbors, Visited, Unvisited]),
             State2 = do_send(#forward{origin = Origin, sender = I, visited = Visited}, J, State),
             State2#dstree{status = waiting,
                           children = m(Children, [J])}
@@ -144,7 +144,7 @@ report(#dstree{report_fun = RF, origin = Origin, tree = Tree} = State) ->
     State.
 
 do_send(M, X, #dstree{send_fun = SF} = State) ->
-    io:format("~p sending ~w to ~p~n", [State#dstree.id, M, X]),
+    ?DBG("~p sending ~w to ~p~n", [State#dstree.id, M, X]),
     SF(X, M),
     State.
 
