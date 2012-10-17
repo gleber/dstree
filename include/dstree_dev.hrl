@@ -1,0 +1,3 @@
+-record(forward,  {origin, sender, visited}).
+-record(finished, {origin, tree}).
+-record(return,   {origin, sender, subtree, visited}).
