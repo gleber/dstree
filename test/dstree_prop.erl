@@ -30,14 +30,14 @@
 %%% API
 %%%===================================================================
 
-test_prop_simple() -> 
+test_prop_simple() ->
     true = ?QC(dstree_prop:prop_simple()).
 prop_simple() ->
     ?FORALL(X, boolean(),
             X =:= (X andalso X)
-      ).
+           ).
 
-test_prop_all() -> 
+test_prop_all() ->
     true = ?QC(dstree_prop:prop_all()).
 prop_all() ->
     ?FORALL(X, cgraph(),
@@ -48,19 +48,34 @@ run_test(CGraph) ->
     Sparse = to_sparse(CGraph),
     DG = sparse_to_digraph(Sparse),
     {connected, true} = {connected, is_connected(DG)},
-    L = digraph:vertices(DG),
+    L = OriginalVertices0 = digraph:vertices(DG),
+    VCount = length(L),
     dstree_tests:print_graph(DG),
     Owner = self(),
-    [ begin
-          {ok, P} = dstree_server:start(self(), X, [{send_fn, fast_send()}, {report_fn, report_fun(Owner, make_nop(2))}]),
-          register(X, P)
-      end || X <- L ],
+    Pids =
+        [ begin
+              {ok, P} = dstree_server:start(self(), X, [{send_fn, fast_send()},
+                                                        {report_fn, report_fun(Owner, make_nop(2))}]),
+              erlang:monitor(process, P),
+              register(X, P),
+              P
+          end || X <- L ],
     [ dstree_tests:connect(X, Y) || X <- L, Y <- digraph:out_neighbours(DG, X) ],
-    [ dstree_server:search(X) || X <- dstree_utils:random_pick(1, L) ],
-    Res = wait_for(L),
+    Start = now(),
+    [Root] = dstree_utils:random_pick(1, L),
+    dstree_server:search(Root),
+    {true, {Root, _} = Tree0} = wait_for(L),
+    Time = timer:now_diff(now(), Start),
+    true = (Time < (500 * VCount)),
+    Tree = tree_to_digraph(Tree0),
+    TreeVertices = lists:sort(digraph:vertices(Tree)),
+    digraph:delete(Tree),
+    OriginalVertices = lists:sort(OriginalVertices0),
+    OriginalVertices = TreeVertices,
     [ dstree_server:stop(X) || X <- L ],
-    timer:sleep(100),
-    Res.
+    wait_for_dead(Pids),
+    digraph:delete(DG),
+    true.
 
 fast_send() ->
     fun(X, M) ->
@@ -68,9 +83,9 @@ fast_send() ->
     end.
 
 report_fun(Owner, Printer) ->
-    fun({done, _Origin, _Tree} = Args) ->
+    fun({done, _Origin, Tree} = Args) ->
             Printer("node has finished: ~p", [Args]),
-            Owner ! ok
+            Owner ! {ok, Tree}
     end.
 
 make_nop(1) ->
@@ -78,17 +93,52 @@ make_nop(1) ->
 make_nop(2) ->
     fun(_, _) -> ok end.
 
-wait_for([]) ->
+wait_for_dead([]) ->
     true;
-wait_for(L) ->
+wait_for_dead([P|R]) ->
     receive
-        ok ->
-            wait_for(tl(L))
+        {'DOWN', _, process, P, _} ->
+            wait_for_dead(R)
+    after
+        1000 ->
+            timeout
+    end.
+
+
+wait_for(L) ->
+    wait_for(undefined, L).
+
+wait_for(T, []) ->
+    {true, T};
+wait_for(T, L) ->
+    receive
+        {ok, Tree} ->
+            case T of
+                undefined ->
+                    wait_for(Tree, tl(L));
+                Tree ->
+                    wait_for(Tree, tl(L))
+            end
     after 5000 ->
             ?DBG("TIMEOUT", []),
             false
     end.
-              
+
+tree_to_digraph({Id, Children}) ->
+    DG = digraph:new([acyclic]),
+    tree_to_digraph(DG, {Id, Children}),
+    true = is_connected(DG),
+    DG.
+
+tree_to_digraph(DG, {Id, Children}) ->
+    digraph:add_vertex(DG, Id),
+    [ tree_to_digraph(DG, Subtree) || Subtree <- Children ],
+    [ begin
+          digraph:add_edge(DG, X, Id),
+          digraph:add_edge(DG, Id, X)
+      end || {X, _} <- Children ],
+    DG.
+
 
 %%%===================================================================
 %%% Internal functions
@@ -100,10 +150,10 @@ is_connected(DG) ->
 sparse_to_digraph(Graph) ->
     DG = digraph:new([cyclic]),
     L = [ {i2a(X), [i2a(E)||E<-Edges]} || {X, Edges} <- lists:zip(lists:seq(1, length(Graph)), Graph) ],
-    {Verticies, _} = lists:unzip(L),
-    %% ?DBG("Verticies: ~p", [Verticies]),
-    [ digraph:add_vertex(DG, V) || V <- Verticies ],
-    %% lists:map(digraph:add_vertex(DG, _), Verticies),
+    {Vertices, _} = lists:unzip(L),
+    %% ?DBG("Vertices: ~p", [Vertices]),
+    [ digraph:add_vertex(DG, V) || V <- Vertices ],
+    %% lists:map(digraph:add_vertex(DG, _), Vertices),
     [ begin
           %% ?DBG("edge: ~p", [{V, E}]),
           digraph:add_edge(DG, V, E),
@@ -170,4 +220,3 @@ cgraph(S) ->
                {3, ?LAZY({{'node', pos()}, cgraph(S-1)})},
                {1, ?LAZY({{'edge', pos(), pos()}, cgraph(S-1)})}
               ]).
-
