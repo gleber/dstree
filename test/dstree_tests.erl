@@ -16,7 +16,6 @@ proper_test_() ->
     {foreach, fun () -> setup() end,
      fun (State) -> cleanup(State) end,
      [
-      {timeout, 100, fun dstree_prop:test_prop_simple/0},
       {timeout, 100, fun dstree_prop:test_prop_all/0},
       fun() -> ok end]}.
     
@@ -75,18 +74,16 @@ random_tree_test() ->
       end || _ <- lists:seq(1, 100) ].
 
 add_random_edge(G) ->
-    V = digraph:vertices(G),
-    [V1, V2] = dstree_utils:random_pick(2, V),
-    case lists:member(V2, digraph:out_neighbours(G, V1)) of
-        true -> ok;
-        false -> digraph:add_edge(G, V1, V2)
+    case digraph:vertices(G) of
+        [_, _ | _] = V ->
+            [V1, V2] = dstree_utils:random_pick(2, V),
+            case lists:member(V2, digraph:out_neighbours(G, V1)) of
+                true -> ok;
+                false -> digraph:add_edge(G, V1, V2)
+            end;
+        _ ->
+            ok
     end.
-
-%% eunit_test_() ->
-%%     {foreach, fun () -> setup() end,
-%%      fun (State) -> cleanup(State) end,
-%%      [{timeout, 100, fun test_random/0},
-%%       fun() -> ok end]}.
 
 setup() ->
     ok.

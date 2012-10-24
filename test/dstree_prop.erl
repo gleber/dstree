@@ -9,8 +9,8 @@
 -module(dstree_prop).
 
 %% API
--export([test_prop_simple/0, test_prop_all/0]).
--export([prop_simple/0, prop_all/0]).
+-export([test_prop_all/0]).
+-export([prop_all/0]).
 
 -compile(export_all).
 
@@ -29,13 +29,6 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
-
-test_prop_simple() ->
-    true = ?QC(dstree_prop:prop_simple()).
-prop_simple() ->
-    ?FORALL(X, boolean(),
-            X =:= (X andalso X)
-           ).
 
 test_prop_all() ->
     true = ?QC(dstree_prop:prop_all()).
@@ -62,6 +55,7 @@ start_nodes(L) ->
 
 setup_connections(L, DG) ->
     [ dstree_tests:connect(X, Y) || X <- L, Y <- digraph:out_neighbours(DG, X) ].
+
 
 run_test(CGraph) ->
     Sparse = to_sparse(CGraph),
@@ -91,8 +85,9 @@ match_graphs(Original, Result) ->
     ResultVertices = lists:sort(digraph:vertices(Result)),
     OriginalVertices = ResultVertices,
     [ begin
-          ON = digraph:out_neighbours(Original, V),
-          [ true = lists:member(C, ON) || C <- digraph:out_neighbours(Result, V) ]
+          ON = ordsets:from_list(digraph:out_neighbours(Original, V)),
+          RN = ordsets:from_list(digraph:out_neighbours(Result, V)),
+          true = ordsets:is_subset(RN, ON)
       end || V <- ResultVertices ],
     ok.
 
