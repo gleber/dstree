@@ -44,38 +44,53 @@ prop_all() ->
             run_test(X)
            ).
 
+setup_nodes(DG) ->
+    L = digraph:vertices(DG),
+    Pids = start_nodes(L),
+    setup_connections(L, DG),
+    Pids.
+
+start_nodes(L) ->
+    Owner = self(),
+    [ begin
+          {ok, P} = dstree_server:start(self(), X, [{send_fn, fast_send()},
+                                                    {report_fn, report_fun(Owner, make_nop(2))}]),
+          erlang:monitor(process, P),
+          register(X, P),
+          P
+      end || X <- L ].
+
+setup_connections(L, DG) ->
+    [ dstree_tests:connect(X, Y) || X <- L, Y <- digraph:out_neighbours(DG, X) ].
+
 run_test(CGraph) ->
     Sparse = to_sparse(CGraph),
     DG = sparse_to_digraph(Sparse),
     {connected, true} = {connected, is_connected(DG)},
-    L = OriginalVertices0 = digraph:vertices(DG),
+    L = digraph:vertices(DG),
     VCount = length(L),
-    dstree_tests:print_graph(DG),
-    Owner = self(),
-    Pids =
-        [ begin
-              {ok, P} = dstree_server:start(self(), X, [{send_fn, fast_send()},
-                                                        {report_fn, report_fun(Owner, make_nop(2))}]),
-              erlang:monitor(process, P),
-              register(X, P),
-              P
-          end || X <- L ],
-    [ dstree_tests:connect(X, Y) || X <- L, Y <- digraph:out_neighbours(DG, X) ],
+    Pids = setup_nodes(DG),
+
     Start = now(),
     [Root] = dstree_utils:random_pick(1, L),
     dstree_server:search(Root),
     {true, {Root, _} = Tree0} = wait_for(L),
     Time = timer:now_diff(now(), Start),
     true = (Time < (500 * VCount)),
+
     Tree = tree_to_digraph(Tree0),
-    TreeVertices = lists:sort(digraph:vertices(Tree)),
-    digraph:delete(Tree),
-    OriginalVertices = lists:sort(OriginalVertices0),
-    OriginalVertices = TreeVertices,
+    match_graphs(DG, Tree),
     [ dstree_server:stop(X) || X <- L ],
     wait_for_dead(Pids),
+    digraph:delete(Tree),
     digraph:delete(DG),
     true.
+
+match_graphs(Original, Result) ->
+    TreeVertices = lists:sort(digraph:vertices(Result)),
+    OriginalVertices = lists:sort(digraph:vertices(Original)),
+    OriginalVertices = TreeVertices,
+    ok.
 
 fast_send() ->
     fun(X, M) ->
