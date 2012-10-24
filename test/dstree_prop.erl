@@ -87,9 +87,13 @@ run_test(CGraph) ->
     true.
 
 match_graphs(Original, Result) ->
-    TreeVertices = lists:sort(digraph:vertices(Result)),
     OriginalVertices = lists:sort(digraph:vertices(Original)),
-    OriginalVertices = TreeVertices,
+    ResultVertices = lists:sort(digraph:vertices(Result)),
+    OriginalVertices = ResultVertices,
+    [ begin
+          ON = digraph:out_neighbours(Original, V),
+          [ true = lists:member(C, ON) || C <- digraph:out_neighbours(Result, V) ]
+      end || V <- ResultVertices ],
     ok.
 
 fast_send() ->
