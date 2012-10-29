@@ -7,10 +7,12 @@ tests:  $(REBAR)
 	$(REBAR) eunit skip_deps=true suite=dstree
 
 sh: all
-	erl -pa ebin/ -run reloader -eval 'shell_default:m(dstree).'
+	erl -pa ebin/ -pa .eunit/ -run reloader -eval 'shell_default:m(dstree).'
 
 test: tests
 
+clean:
+	$(REBAR) clean skip_deps=true
 
 # Detect or download rebar
 
