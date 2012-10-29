@@ -42,54 +42,71 @@ get_tree(#dstree{tree = Tree}) ->
 search(#dstree{id = Id} = State) ->
     process(#forward{origin=Id,sender=Id,visited=[]}, State).
 
-process(Msg, #dstree{status = initial,
-                     id = I,
-                     neighbors = Neighbors} = State) ->
-    case Msg of
-        #forward{origin= Origin, sender = Sender, visited = Visited} ->
-            ?DBG("~p got forward (~p)", [I, Origin]),
-            check(State#dstree{status = waiting,
-                               parent = Sender,
-                               neighbors = m(Neighbors, Visited),
-                               origin = Origin,
-                               tree = undefined,
-                               subtree = orddict:new(),
-                               children = ordsets:new()},
-                  m(Visited, [I]));
-        _Msg ->
-            ?DBG("~p unkown message ~p", [I, _Msg]),
-            State
-    end;
+%%
+%% initial state
+%%
+process(#forward{origin= Origin, sender = Sender, visited = Visited},
+        #dstree{status = initial,
+                id = I,
+                neighbors = Neighbors} = State) ->
+    ?DBG("~p got forward (~p)", [I, Origin]),
+    check(State#dstree{status = waiting,
+                       parent = Sender,
+                       neighbors = m(Neighbors, Visited),
+                       origin = Origin,
+                       tree = undefined,
+                       subtree = orddict:new(),
+                       children = ordsets:new()},
+          m(Visited, [I]));
+process(_Msg,
+        #dstree{status = initial,
+                id = I,
+                neighbors = Neighbors} = State) ->
+    ?DBG("~p unkown message ~p", [I, _Msg]),
+    State;
 
-process(Msg, #dstree{status = waiting,
-                     id = I,
-                     neighbors = Neighbors,
-                     children = Children,
-                     subtree = Subtree,
-                     origin = Origin} = State) ->
-    case Msg of
-        #return{origin = X, visited = Visited, subtree = ReturnSubtree} when X == Origin ->
-            ?DBG("~p got return (~p)", [I, Origin]),
-            Subtree2 = merge_subtree(Children, Subtree, ReturnSubtree),
-            State2 = State#dstree{subtree = Subtree2},
-            check(State2, Visited);
-        #forward{origin = MOrigin, sender = Sender, visited = Visited} ->
-            if MOrigin > Origin orelse Origin == undefined ->
-                    ?DBG("~p got forward (~p)", [I, MOrigin]),
-                    check(State#dstree{parent = Sender,
-                                       neighbors = m(Neighbors,Visited),
-                                       origin = MOrigin,
-                                       children = ordsets:new()},
-                          [I | Visited]);
-               true ->
-                    ?DBG("~p ignores ~p (~p =< ~p)", [I, Sender, MOrigin, Origin]),
-                    State#dstree{neighbors = m(Neighbors,Visited)}
-            end;
-        #finished{origin = X, tree = Tree} = Msg when X == Origin ->
-            broadcast(Msg, State),
-            State2 = State#dstree{status = initial, tree = Tree},
-            report(State2)
-    end.
+%%
+%% waiting state
+%%
+process(#return{origin = X, visited = Visited, subtree = ReturnSubtree},
+        #dstree{status = waiting,
+                id = I,
+                neighbors = Neighbors,
+                children = Children,
+                subtree = Subtree,
+                origin = Origin} = State) when X == Origin ->
+    ?DBG("~p got return (~p)", [I, Origin]),
+    Subtree2 = merge_subtree(Children, Subtree, ReturnSubtree),
+    State2 = State#dstree{subtree = Subtree2},
+    check(State2, Visited);
+process(#forward{origin = MOrigin, sender = Sender, visited = Visited},
+        #dstree{status = waiting,
+                id = I,
+                neighbors = Neighbors,
+                children = Children,
+                subtree = Subtree,
+                origin = Origin} = State) ->
+    if MOrigin > Origin orelse Origin == undefined ->
+            ?DBG("~p got forward (~p)", [I, MOrigin]),
+            check(State#dstree{parent = Sender,
+                               neighbors = m(Neighbors,Visited),
+                               origin = MOrigin,
+                               children = ordsets:new()},
+                  [I | Visited]);
+       true ->
+            ?DBG("~p ignores ~p (~p =< ~p)", [I, Sender, MOrigin, Origin]),
+            State#dstree{neighbors = m(Neighbors,Visited)}
+    end;
+process(#finished{origin = X, tree = Tree} = Msg,
+        #dstree{status = waiting,
+                id = I,
+                neighbors = Neighbors,
+                children = Children,
+                subtree = Subtree,
+                origin = Origin} = State) when X == Origin ->
+    broadcast(Msg, State),
+    State2 = State#dstree{status = initial, tree = Tree},
+    report(State2).
 
 merge_subtree(Children, Subtree, ReturnSubtree) ->
     L = orddict:to_list(ReturnSubtree),
