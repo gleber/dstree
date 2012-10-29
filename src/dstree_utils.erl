@@ -1,6 +1,9 @@
 -module(dstree_utils).
 
--export([shuffle/1, random_pick/2]).
+-export([shuffle/1, random_pick/2
+
+         %% apply_after/4
+        ]).
 
 shuffle(List) -> shuffle(List, []).
 
@@ -14,3 +17,15 @@ shuffle(List, Acc) ->
 random_pick(N, List0) ->
     {R,_} = lists:split(N, shuffle(List0)),
     R.
+
+%% cancel_timer(Ref) ->
+%%     Ref ! cancel.
+%% apply_after(Time, M, F, A) ->
+%%     spawn(fun() ->
+%%                   receive
+%%                       cancel -> ok
+%%                   after
+%%                       Time ->
+%%                           apply(M, F, A)
+%%                   end
+%%           end).

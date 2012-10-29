@@ -7,6 +7,9 @@
          children = ordsets:new(),
          subtree = orddict:new(),
          tree,
+         waiting_timeout,
+         waiting_for,
+         timers = orddict:new(),
          dbg_fun,
          report_fun,
          send_fun = fun dstree:default_send/2}).

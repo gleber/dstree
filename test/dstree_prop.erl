@@ -76,7 +76,7 @@ run_test(CGraph) ->
     dstree_server:search(Root),
     {true, {Root, _} = Tree0} = wait_for(L),
     Time = timer:now_diff(now(), Start),
-    {true, fast} = {(Time < (500 * VCount)), fast},
+    %% {true, fast} = {(Time < (500 * VCount)), fast},
 
     Tree = tree_to_digraph(Tree0),
     match_graphs(DG, Tree),
@@ -103,7 +103,7 @@ run_unstable_test(CGraph) ->
     dstree_server:search(Root),
     {{true, {Root, _} = Tree0}, wait, L, Killable} = {wait_for(L), wait, L, Killable},
     Time = timer:now_diff(now(), Start),
-    {true, fast_test} = {(Time < (5000 * VCount)), fast_test},
+    %% {true, fast_test} = {(Time < (5000 * VCount)), fast_test},
 
     Tree = tree_to_digraph(Tree0),
     match_graphs(DG, Tree),
