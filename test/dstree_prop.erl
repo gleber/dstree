@@ -9,8 +9,8 @@
 -module(dstree_prop).
 
 %% API
--export([test_prop_all/0]).
--export([prop_all/0]).
+-export([test_prop_basic/0, prop_basic/0]).
+-export([test_prop_unstable/0, prop_unstable/0]).
 
 -compile(export_all).
 
@@ -30,11 +30,18 @@
 %%% API
 %%%===================================================================
 
-test_prop_all() ->
-    true = ?QC(dstree_prop:prop_all()).
-prop_all() ->
+test_prop_basic() ->
+    true = ?QC(dstree_prop:prop_basic()).
+prop_basic() ->
     ?FORALL(X, cgraph(),
             run_test(X)
+           ).
+
+test_prop_unstable() ->
+    true = ?QC(dstree_prop:prop_unstable()).
+prop_unstable() ->
+    ?FORALL(X, cgraph(),
+            run_unstable_test(X)
            ).
 
 setup_nodes(DG) ->
@@ -56,7 +63,6 @@ start_nodes(L) ->
 setup_connections(L, DG) ->
     [ dstree_tests:connect(X, Y) || X <- L, Y <- digraph:out_neighbours(DG, X) ].
 
-
 run_test(CGraph) ->
     Sparse = to_sparse(CGraph),
     DG = sparse_to_digraph(Sparse),
@@ -70,7 +76,7 @@ run_test(CGraph) ->
     dstree_server:search(Root),
     {true, {Root, _} = Tree0} = wait_for(L),
     Time = timer:now_diff(now(), Start),
-    true = (Time < (500 * VCount)),
+    {true, fast} = {(Time < (500 * VCount)), fast},
 
     Tree = tree_to_digraph(Tree0),
     match_graphs(DG, Tree),
@@ -80,6 +86,41 @@ run_test(CGraph) ->
     digraph:delete(DG),
     true.
 
+run_unstable_test(CGraph) ->
+    Sparse = to_sparse(CGraph),
+    DG = sparse_to_digraph(Sparse),
+    {connected, true} = {connected, is_connected(DG)},
+    L = digraph:vertices(DG),
+    VCount = length(L),
+    Pids = setup_nodes(DG),
+
+    Start = now(),
+    %% [Root] = dstree_utils:random_pick(1, L),
+    [Root|_] = L,
+    Killable = [ V || V <- L -- [Root], not is_critical(DG, V) ],
+    [ dstree_server:stop(V) || V <- Killable ],
+    io:format("Killed: ~p~n", [Killable]),
+    dstree_server:search(Root),
+    {{true, {Root, _} = Tree0}, wait, L, Killable} = {wait_for(L), wait, L, Killable},
+    Time = timer:now_diff(now(), Start),
+    {true, fast_test} = {(Time < (5000 * VCount)), fast_test},
+
+    Tree = tree_to_digraph(Tree0),
+    match_graphs(DG, Tree),
+    [ dstree_server:stop(X) || X <- L ],
+    wait_for_dead(Pids),
+    digraph:delete(Tree),
+    digraph:delete(DG),
+    true.
+
+
+is_critical(DG, V) ->
+    Vs = digraph:vertices(DG),
+    DG2 = digraph_utils:subgraph(DG, Vs -- [V]),
+    R = is_connected(DG2),
+    digraph:delete(DG2),
+    not R.
+
 match_graphs(Original, Result) ->
     OriginalVertices = lists:sort(digraph:vertices(Original)),
     ResultVertices = lists:sort(digraph:vertices(Result)),
@@ -87,13 +128,13 @@ match_graphs(Original, Result) ->
     [ begin
           ON = ordsets:from_list(digraph:out_neighbours(Original, V)),
           RN = ordsets:from_list(digraph:out_neighbours(Result, V)),
-          true = ordsets:is_subset(RN, ON)
+          {true, matching_graphs} = {ordsets:is_subset(RN, ON), matching_graphs}
       end || V <- ResultVertices ],
     ok.
 
 fast_send() ->
     fun(X, M) ->
-            X ! {dstree, M}
+            catch (X ! {dstree, M})
     end.
 
 report_fun(Owner, Printer) ->
@@ -141,7 +182,7 @@ wait_for(T, L) ->
 tree_to_digraph({Id, Children}) ->
     DG = digraph:new([acyclic]),
     tree_to_digraph(DG, {Id, Children}),
-    true = is_connected(DG),
+    {true, is_connected} = {is_connected(DG), is_connected},
     DG.
 
 tree_to_digraph(DG, {Id, Children}) ->

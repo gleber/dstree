@@ -16,7 +16,8 @@ proper_test_() ->
     {foreach, fun () -> setup() end,
      fun (State) -> cleanup(State) end,
      [
-      {timeout, 100, fun dstree_prop:test_prop_all/0},
+      {timeout, 100, fun dstree_prop:test_prop_basic/0},
+      {timeout, 100, fun dstree_prop:test_prop_unstable/0},
       fun() -> ok end]}.
     
 random_tree(G, [R|L]) ->
