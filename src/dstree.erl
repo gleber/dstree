@@ -7,6 +7,7 @@
 -include_lib("dstree/include/dstree.hrl").
 -include_lib("dstree/include/dstree_dev.hrl").
 
+%% -define(DBG(Format, Args), io:fwrite(" src/~p.erl:~p -- " ++ Format ++ "~n", [?MODULE, ?LINE] ++ Args)).
 %% -define(DBG(Format, Args), io:fwrite(user, "~p:~p -- " ++ Format ++ "~n", [?MODULE, ?LINE] ++ Args)).
 -define(DBG(Format, Args), ok).
 
@@ -20,7 +21,7 @@ new(I, Opts) ->
     Neighbors = proplists:get_value(neighbors, Opts, []),
     SendFn = proplists:get_value(send_fn, Opts, fun default_send/2),
     ReportFn = proplists:get_value(report_fn, Opts, fun default_report/1),
-    Timeout = proplists:get_value(timeout, Opts, 500),
+    Timeout = proplists:get_value(timeout, Opts, 200),
     #dstree{status = initial,
             id = I,
             parent = I,
@@ -85,18 +86,21 @@ process(#return{origin = X, sender = Sender, visited = Visited, subtree = Return
         #dstree{status = waiting,
                 children = Children,
                 subtree = Subtree,
-                origin = Origin} = State0) when X == Origin ->
+                origin = Origin,
+                id = _I} = State0) when X == Origin ->
     Children2 = m(Children, [Sender]),
     State = maybe_cancel_wait(Sender, State0#dstree{children = Children2}),
-    ?DBG("~p got return (~p)", [I, Origin]),
+    ?DBG("~p got return (~p)", [_I, Origin]),
     Subtree2 = merge_subtree(Children2, Subtree, ReturnSubtree),
     State2 = State#dstree{subtree = Subtree2},
     check(State2, Visited);
 
-process(#timeout{dead = Dead} = _Msg, %% one of children seems to be dead
+process(#timeout{dead = Dead, visited = Visited} = _Msg, %% one of children seems to be dead
         #dstree{status = waiting,
                 waiting_for = {Dead, _Ref},
-                id = I} = State) ->
+                id = _I} = State0) ->
+    io:format("at ~p child timeouted  ~p~n", [_I, Dead]),
+    State = add_to_dead(Dead, State0#dstree{waiting_for = undefined}),
     check(State, m(Visited, [Dead]));
 
 %%
@@ -106,23 +110,30 @@ process(#finished{origin = X, sender = Sender, tree = Tree} = Msg,
         #dstree{status = finishing,
                 id = I,
                 origin = Origin} = State0) when X == Origin ->
+    ?DBG("at ~p final tree is ~p~n", [I, Tree]),
     State = maybe_cancel_wait(Sender, State0),
     broadcast(Msg#finished{sender = I}, State),
     State2 = State#dstree{status = initial, tree = Tree},
     report(State2);
 
-process(#timeout{dead = Dead} = _Msg, %% parent seems to be dead
+process(#timeout{dead = Dead, visited = _Visited} = _Msg, %% parent seems to be dead
         #dstree{status = finishing,
                 waiting_for = {Dead, _Ref},
-                id = I} = State) ->
-    State;
+                id = _I} = State) ->
+    io:format("at ~p parent timeouted ~p~n", [_I, Dead]),
+    add_to_dead(Dead, State);
 
 %%
 %% Catch all state
 %%
-process(#timeout{dead = _Dead} = _Msg, %%GP: sometimes cancel timer can be just slightly too late
+process(#timeout{dead = Dead, visited = _Visited} = _Msg, %%GP: sometimes cancel timer can be just slightly too late
         #dstree{waiting_for = undefined,
-                id = I} = State) ->
+                id = _I} = State) ->
+    io:format("at ~p cancel was late ~p~n", [_I, Dead]),
+    State;
+
+process(#return{} = _Msg, #dstree{id = I} = State) -> %%GP: late return may happen
+    io:format("~p late return ~p~n", [I, _Msg]),
     State;
 
 process(_Msg, #dstree{id = I} = State) ->
@@ -153,7 +164,7 @@ check(#dstree{id = I,
         [] ->
             if I == Parent -> %% building a tree is done, we are the root!
                     Tree = {I, Subtree},
-                    ?DBG("~nFinal spanning tree: ~p~n~n", [Tree]),
+                    ?DBG("final spanning tree: ~p~n", [Tree]),
                     State2 = broadcast(#finished{origin = Origin, sender = I, tree = Tree}, State),
                     State3 = State2#dstree{status = initial, tree = Tree},
                     undefined = State3#dstree.waiting_for,
@@ -164,13 +175,13 @@ check(#dstree{id = I,
                                              visited = Visited,
                                              subtree = orddict:from_list([{I, Subtree}])},
                                      Parent, State),
-                    wait(Parent, State2#dstree{status = finishing})
+                    wait(Parent, Visited, State2#dstree{status = finishing})
             end;
         [J | _] ->
             ?DBG("~p is not done: ~p - ~p = ~p~n", [I, Neighbors, Visited, Unvisited]),
             State2 = do_send(#forward{origin = Origin, sender = I, visited = Visited},
                              J, State),
-            wait(J, State2#dstree{status = waiting})
+            wait(J, Visited, State2#dstree{status = waiting})
     end.
 
 broadcast(M, #dstree{children = Children} = State) ->
@@ -178,12 +189,12 @@ broadcast(M, #dstree{children = Children} = State) ->
                         do_send(M, X, S)
                 end, State, dstree_utils:shuffle(ordsets:to_list(Children))).
 
-report(#dstree{report_fun = RF, origin = Origin, tree = Tree} = State) ->
-    RF({done, Origin, Tree}),
+report(#dstree{report_fun = RF, origin = Origin, tree = Tree, id = I} = State) ->
+    RF({done, Origin, Tree, I}),
     State.
 
 do_send(Msg, X, #dstree{send_fun = SF} = State) ->
-    io:format("~p sending ~w to ~p~n", [State#dstree.id, Msg, X]),
+    ?DBG("~p sending ~w to ~p~n", [State#dstree.id, Msg, X]),
     SF(X, Msg),
     State.
 
@@ -192,9 +203,9 @@ m(X, Y) ->
 d(X, Y) ->
     ordsets:subtract(X, Y).
 
-wait(Identifier, #dstree{waiting_timeout = Timeout,
-                         origin = Origin} = State) ->
-    Ref = set_timer(Origin, Identifier, Timeout, State),
+wait(Identifier, Visited, #dstree{waiting_timeout = Timeout,
+                                  origin = Origin} = State) ->
+    Ref = set_timer(Origin, Identifier, Visited, Timeout, State),
     State#dstree{waiting_for = {Identifier, Ref}}.
 
 maybe_cancel_wait(Identifier, #dstree{waiting_for = {Identifier, Ref}} = State) ->
@@ -204,10 +215,10 @@ maybe_cancel_wait(_Id, #dstree{waiting_for = WF} = State) ->
     io:format("~p does not match ~p~n", [_Id, WF]),
     State.
 
-set_timer(Origin, Identifier, Time, #dstree{id = Id} = State) ->
-    Msg = #timeout{origin = Origin, dead = Identifier},
-    {ok, Ref} = timer:apply_after(Time, erlang, apply,
-                                  [fun do_send/3, [Msg, Id, State]]),
+set_timer(Origin, Identifier, Visited, Time, #dstree{id = Id} = State) ->
+    Msg = #timeout{origin = Origin, dead = Identifier, visited = Visited},
+    {ok, Ref} = dstree_utils:apply_after(Time, erlang, apply,
+                                         [fun do_send/3, [Msg, Id, State]]),
     Ref.
 
 %% add_timer(Origin, Identifier, Time, #dstree{timers = Timers} = State) ->
@@ -217,6 +228,9 @@ set_timer(Origin, Identifier, Time, #dstree{id = Id} = State) ->
 %%     State#dstree{timers = orddict:store(Ref, Msg, Timers)}.
 
 cancel_timer(Ref, #dstree{timers = Timers} = State) ->
-    io:format("Cancelling timer: ~p~n", [Ref]),
-    {ok, _} = timer:cancel(Ref),
+    ?DBG("Cancelling timer: ~p~n", [Ref]),
+    {ok, _} = dstree_utils:cancel(Ref),
     State#dstree{timers = orddict:erase(Ref, Timers)}.
+
+add_to_dead(Dead, #dstree{dead = Z} = State) ->
+    State#dstree{dead = m(Z, [Dead])}.

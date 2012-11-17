@@ -50,11 +50,24 @@ setup_nodes(DG) ->
     setup_connections(L, DG),
     Pids.
 
+fast_send() ->
+    fun(X, M) ->
+            catch (X ! {dstree, M})
+    end.
+
+report_fun(Owner, Printer) ->
+    fun({done, _Origin, Tree, Id} = Args) ->
+            %% Printer("~p node has finished: ~p~n", [Id, Args]),
+            Owner ! {ok, Id, Tree}
+    end.
+
 start_nodes(L) ->
     Owner = self(),
     [ begin
           {ok, P} = dstree_server:start(self(), X, [{send_fn, fast_send()},
-                                                    {report_fn, report_fun(Owner, make_nop(2))}]),
+                                                    %% {report_fn, report_fun(Owner, make_nop(2))}
+                                                    {report_fn, report_fun(Owner, fun io:format/2)}
+                                                   ]),
           erlang:monitor(process, P),
           register(X, P),
           P
@@ -97,17 +110,21 @@ run_unstable_test(CGraph) ->
     Start = now(),
     %% [Root] = dstree_utils:random_pick(1, L),
     [Root|_] = L,
-    Killable = [ V || V <- L -- [Root], not is_critical(DG, V) ],
+    Killable = case [ V || V <- L -- [Root], not is_critical(DG, V) ] of
+                   [] -> [];
+                   X -> [hd(X)]
+               end,
     [ dstree_server:stop(V) || V <- Killable ],
-    io:format("Killed: ~p~n", [Killable]),
+    io:format("K: ~p~n", [Killable]),
+    Left = L -- Killable,
     dstree_server:search(Root),
-    {{true, {Root, _} = Tree0}, wait, L, Killable} = {wait_for(L), wait, L, Killable},
+    {{true, {Root, _} = Tree0}, wait, Left, Killable} = {wait_for(Left), wait, Left, Killable},
     Time = timer:now_diff(now(), Start),
     %% {true, fast_test} = {(Time < (5000 * VCount)), fast_test},
 
     Tree = tree_to_digraph(Tree0),
-    match_graphs(DG, Tree),
-    [ dstree_server:stop(X) || X <- L ],
+    match_graphs(DG, Killable, Tree),
+    [ dstree_server:stop(X) || X <- Left ],
     wait_for_dead(Pids),
     digraph:delete(Tree),
     digraph:delete(DG),
@@ -122,7 +139,10 @@ is_critical(DG, V) ->
     not R.
 
 match_graphs(Original, Result) ->
-    OriginalVertices = lists:sort(digraph:vertices(Original)),
+    match_graphs(Original, [], Result).
+
+match_graphs(Original, Killed, Result) ->
+    OriginalVertices = lists:sort(digraph:vertices(Original)) -- Killed,
     ResultVertices = lists:sort(digraph:vertices(Result)),
     OriginalVertices = ResultVertices,
     [ begin
@@ -131,17 +151,6 @@ match_graphs(Original, Result) ->
           {true, matching_graphs} = {ordsets:is_subset(RN, ON), matching_graphs}
       end || V <- ResultVertices ],
     ok.
-
-fast_send() ->
-    fun(X, M) ->
-            catch (X ! {dstree, M})
-    end.
-
-report_fun(Owner, Printer) ->
-    fun({done, _Origin, Tree} = Args) ->
-            Printer("node has finished: ~p", [Args]),
-            Owner ! {ok, Tree}
-    end.
 
 make_nop(1) ->
     fun(_) -> ok end;
@@ -167,15 +176,15 @@ wait_for(T, []) ->
     {true, T};
 wait_for(T, L) ->
     receive
-        {ok, Tree} ->
+        {ok, Id, Tree} ->
             case T of
                 undefined ->
-                    wait_for(Tree, tl(L));
+                    wait_for(Tree, L -- [Id]);
                 Tree ->
-                    wait_for(Tree, tl(L))
+                    wait_for(Tree, L -- [Id])
             end
     after 5000 ->
-            ?DBG("TIMEOUT", []),
+            ?DBG("TIMEOUT ~p", [L]),
             false
     end.
 
