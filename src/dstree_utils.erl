@@ -18,6 +18,8 @@ random_pick(N, List0) ->
     {R,_} = lists:split(N, shuffle(List0)),
     R.
 
+cancel_timer(undefined) ->
+    ok;
 cancel_timer(Ref) ->
     Ref ! cancel.
 apply_after(Time, M, F, A) ->

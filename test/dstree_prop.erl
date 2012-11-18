@@ -183,7 +183,7 @@ wait_for(T, L) ->
                 Tree ->
                     wait_for(Tree, L -- [Id])
             end
-    after 5000 ->
+    after 50000 ->
             ?DBG("TIMEOUT ~p", [L]),
             false
     end.

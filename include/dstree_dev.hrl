@@ -1,4 +1,5 @@
 -record(forward,  {origin, sender, visited}).
 -record(finished, {origin, sender, tree}).
 -record(return,   {origin, sender, subtree, visited}).
--record(timeout,  {origin, dead, visited}).
+-record(timeout,  {origin, sender, dead, visited}).
+-record(working,  {origin, sender, waiting_for, visited}).
