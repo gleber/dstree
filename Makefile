@@ -7,7 +7,7 @@ tests:  $(REBAR)
 	$(REBAR) eunit skip_deps=true suite=dstree
 
 sh: all
-	erl -pa ebin/ -pa .eunit/ -run reloader -eval 'shell_default:m(dstree).'
+	erl -pa ebin/ -pa .eunit/ -pa deps/*/ebin -run reloader -eval 'shell_default:m(dstree).'
 
 test: tests
 

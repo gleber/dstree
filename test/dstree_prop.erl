@@ -19,12 +19,21 @@
 -include_lib("proper/include/proper.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(DBG(Format, Args), io:fwrite(user, "~p:~p -- " ++ Format ++ "~n", [?MODULE, ?LINE] ++ Args)).
--define(QC(Arg), proper:quickcheck(Arg, [{numtests, 500}, {on_output, dstree_tests:printer()}])).
+-define(DBG(Format, Args), ok).
+
+%% -define(DBG(Format, Args), ((fun() ->
+%%                                      __Now = now(),
+%%                                      {_, _, __MS} = __Now,
+%%                                      {_, {__Hh, __Mm, __Ss}} = calendar:now_to_local_time(__Now),
+%%                                      io:fwrite(user, "[~2..0b:~2..0b:~2..0b.~3..0b] -- " ++ Format ++ "~n", [__Hh, __Mm, __Ss, __MS div 1000] ++ Args)
+%%                              end)())).
+
+-define(QC(Arg), proper:quickcheck(Arg, [{numtests, 500},
+                                         {constraint_tries, 100},
+                                         {on_output, fun printer/2}])).
 
 -type pos() :: non_neg_integer().
--type sparse_graph() :: list(list(pos())).
--type cgraph() :: {graph, sparse_graph()} | {{node, pos()}, cgraph()} | {{edge, pos(), pos()}, cgraph()}.
+-type cgraph() :: {digraph, digraph()} | {{node, pos()}, cgraph()} | {{edge, pos(), pos()}, cgraph()}.
 
 %%%===================================================================
 %%% API
@@ -40,9 +49,12 @@ prop_basic() ->
 test_prop_unstable() ->
     true = ?QC(dstree_prop:prop_unstable()).
 prop_unstable() ->
-    ?FORALL(X, cgraph(),
-            run_unstable_test(X)
-           ).
+    ?TRAPEXIT(?FORALL(X, cgraph_faulty(),
+                      run_test(X)
+                     )).
+
+printer(F, A) ->
+    io:format(user, F, A).
 
 setup_nodes(DG) ->
     L = digraph:vertices(DG),
@@ -50,21 +62,20 @@ setup_nodes(DG) ->
     setup_connections(L, DG),
     Pids.
 
-fast_send() ->
-    fun(X, M) ->
-            catch (X ! {dstree, M})
-    end.
+fast_send(_Id, X, M) ->
+    ?DBG("at ~p send ~p to ~p~n", [_Id, M, X]),
+    catch (X ! {dstree, M}).
 
-report_fun(Owner, Printer) ->
-    fun({done, _Origin, Tree, Id} = Args) ->
-            %% Printer("~p node has finished: ~p~n", [Id, Args]),
+report_fun(Owner, _Printer) ->
+    fun({done, _Origin, Tree, Id} = _Args) ->
+            %% _Printer("~p node has finished: ~p~n", [Id, _Args]),
             Owner ! {ok, Id, Tree}
     end.
 
 start_nodes(L) ->
     Owner = self(),
     [ begin
-          {ok, P} = dstree_server:start(self(), X, [{send_fn, fast_send()},
+          {ok, P} = dstree_server:start(self(), X, [{send_fn, fun fast_send/3},
                                                     %% {report_fn, report_fun(Owner, make_nop(2))}
                                                     {report_fn, report_fun(Owner, fun io:format/2)}
                                                    ]),
@@ -76,60 +87,44 @@ start_nodes(L) ->
 setup_connections(L, DG) ->
     [ dstree_tests:connect(X, Y) || X <- L, Y <- digraph:out_neighbours(DG, X) ].
 
-run_test(CGraph) ->
-    Sparse = to_sparse(CGraph),
-    DG = sparse_to_digraph(Sparse),
+run_test(Problem) ->
+    lists:all(fun run_once/1, lists:duplicate(10, Problem)).
+
+run_once({Kill0, Root0, CGraph} = _Problem) ->
+    Kill = lists:usort(Kill0),
+    Root = i2a(Root0),
+    ?DBG("Root: ~p~n", [Root]),
+    DG = cgraph_to_digraph(CGraph),
     {connected, true} = {connected, is_connected(DG)},
+    %% dstree_tests:print_graph(DG),
     L = digraph:vertices(DG),
-    VCount = length(L),
     Pids = setup_nodes(DG),
-
-    Start = now(),
-    [Root] = dstree_utils:random_pick(1, L),
-    dstree_server:search(Root),
-    {true, {Root, _} = Tree0} = wait_for(L),
-    Time = timer:now_diff(now(), Start),
-    %% {true, fast} = {(Time < (500 * VCount)), fast},
-
-    Tree = tree_to_digraph(Tree0),
-    match_graphs(DG, Tree),
-    [ dstree_server:stop(X) || X <- L ],
-    wait_for_dead(Pids),
-    digraph:delete(Tree),
-    digraph:delete(DG),
-    true.
-
-run_unstable_test(CGraph) ->
-    Sparse = to_sparse(CGraph),
-    DG = sparse_to_digraph(Sparse),
-    {connected, true} = {connected, is_connected(DG)},
-    L = digraph:vertices(DG),
-    VCount = length(L),
-    Pids = setup_nodes(DG),
-
-    Start = now(),
-    %% [Root] = dstree_utils:random_pick(1, L),
-    [Root|_] = L,
-    Killable = case [ V || V <- L -- [Root], not is_critical(DG, V) ] of
-                   [] -> [];
-                   X -> [hd(X)]
-               end,
-    [ dstree_server:stop(V) || V <- Killable ],
-    io:format("K: ~p~n", [Killable]),
+    Killable = lists:map(i2a(_), Kill),
     Left = L -- Killable,
-    dstree_server:search(Root),
-    {{true, {Root, _} = Tree0}, wait, Left, Killable} = {wait_for(Left), wait, Left, Killable},
-    Time = timer:now_diff(now(), Start),
-    %% {true, fast_test} = {(Time < (5000 * VCount)), fast_test},
 
-    Tree = tree_to_digraph(Tree0),
-    match_graphs(DG, Killable, Tree),
+    Start = now(),
+    [ dstree_server:stop(V) || V <- Killable ],
+    ?DBG("K: ~p~n", [Killable]),
+
+    dstree_server:search(Root),
+    Res = wait_for(Left, 3000 * (length(Kill)+1)),
+    RR =
+        case Res of
+            {true, {Root, _} = Tree0} ->
+                _Time = timer:now_diff(now(), Start),
+                %% {true, fast_test} = {(Time < (5000 * VCount)), fast_test},
+                Tree = tree_to_digraph(Tree0),
+                Match = match_graphs(DG, Killable, Tree),
+                digraph:delete(Tree),
+                Match;
+            _ ->
+                false
+        end,
     [ dstree_server:stop(X) || X <- Left ],
     wait_for_dead(Pids),
-    digraph:delete(Tree),
     digraph:delete(DG),
-    true.
-
+    [ catch exit(whereis(dstree_prop:i2a(I)), kill) || I <- lists:seq(0, 1000) ],
+    RR.
 
 is_critical(DG, V) ->
     Vs = digraph:vertices(DG),
@@ -145,12 +140,13 @@ match_graphs(Original, Killed, Result) ->
     OriginalVertices = lists:sort(digraph:vertices(Original)) -- Killed,
     ResultVertices = lists:sort(digraph:vertices(Result)),
     OriginalVertices = ResultVertices,
-    [ begin
-          ON = ordsets:from_list(digraph:out_neighbours(Original, V)),
-          RN = ordsets:from_list(digraph:out_neighbours(Result, V)),
-          {true, matching_graphs} = {ordsets:is_subset(RN, ON), matching_graphs}
-      end || V <- ResultVertices ],
-    ok.
+    Res =
+        [ begin
+              ON = ordsets:from_list(digraph:out_neighbours(Original, V)),
+              RN = ordsets:from_list(digraph:out_neighbours(Result, V)),
+              true = ordsets:is_subset(RN, ON)
+          end || V <- ResultVertices ],
+    [true] == lists:usort(Res).
 
 make_nop(1) ->
     fun(_) -> ok end;
@@ -164,26 +160,28 @@ wait_for_dead([P|R]) ->
         {'DOWN', _, process, P, _} ->
             wait_for_dead(R)
     after
-        1000 ->
+        5000 ->
             timeout
     end.
 
-
 wait_for(L) ->
-    wait_for(undefined, L).
+    wait_for(L, 5000).
 
-wait_for(T, []) ->
+wait_for(L, Timeout) ->
+    wait_for(undefined, L, Timeout).
+
+wait_for(T, [], _) ->
     {true, T};
-wait_for(T, L) ->
+wait_for(T, L, Timeout) ->
     receive
         {ok, Id, Tree} ->
             case T of
                 undefined ->
-                    wait_for(Tree, L -- [Id]);
+                    wait_for(Tree, L -- [Id], Timeout);
                 Tree ->
-                    wait_for(Tree, L -- [Id])
+                    wait_for(Tree, L -- [Id], Timeout)
             end
-    after 50000 ->
+    after Timeout ->
             ?DBG("TIMEOUT ~p", [L]),
             false
     end.
@@ -211,76 +209,67 @@ tree_to_digraph(DG, {Id, Children}) ->
 is_connected(DG) ->
     1 =:= length(digraph_utils:components(DG)).
 
-sparse_to_digraph(Graph) ->
-    DG = digraph:new([cyclic]),
-    L = [ {i2a(X), [i2a(E)||E<-Edges]} || {X, Edges} <- lists:zip(lists:seq(1, length(Graph)), Graph) ],
-    {Vertices, _} = lists:unzip(L),
-    %% ?DBG("Vertices: ~p", [Vertices]),
-    [ digraph:add_vertex(DG, V) || V <- Vertices ],
-    %% lists:map(digraph:add_vertex(DG, _), Vertices),
-    [ begin
-          %% ?DBG("edge: ~p", [{V, E}]),
-          digraph:add_edge(DG, V, E),
-          %% ?DBG("edge: ~p", [{E, V}]),
-          digraph:add_edge(DG, E, V)
-      end
-      || {V, Edges} <- L, E <- Edges ],
-    DG.
-
-add_node(Int, Graph) ->
-    Target = Int rem length(Graph) + 1,
-    Graph ++ [[Target]].
-
-add_edge(_, _, [X]) ->
-    [X];
-add_edge(A, A, Graph) ->
-    Graph;
-add_edge(A, B, Graph) ->
-    %% ?DBG("dstree_prop:add_edge(~p, ~p, ~p)", [A, B, Graph]),
-    TA = (A rem length(Graph)) + 1,
-    TB = (B rem length(Graph)) + 1,
-    G1 = store(TA, TB, Graph),
-    store(TB, TA, G1).
-
-store(Where, What, List) ->
-    %% ?DBG("dstree_prop:store(~p, ~p, ~p)", [Where, What, List]),
-    A = lists:sublist(List, Where - 1),
-    El = lists:nth(Where, List),
-    C = lists:nthtail(Where, List),
-    B = [lists:usort([What | El])],
-    Res = A ++ B ++ C,
-    %% ?DBG("~p ~p ~p", [A, B, C]),
-    Res.
-
--spec to_sparse(cgraph()) -> sparse_graph().
-to_sparse(Graph) ->
-    {graph, G} = to_sparse0(Graph),
-    G.
-
--spec to_sparse0(cgraph()) -> cgraph().
-to_sparse0({{node, Int}, {graph, Graph}}) ->
-    {graph, add_node(Int, Graph)};
-to_sparse0({{edge, A, B}, {graph, Graph}}) ->
-    {graph, add_edge(A, B, Graph)};
-to_sparse0({Op, Chain}) ->
-    to_sparse0({Op, to_sparse0(Chain)}).
-
+%%%%%%%%%%%%%%% generators %%%%%%%%%%%%%%%%%%
 i2a(X) -> index_to_atom(X).
 index_to_atom(X) ->
     list_to_atom(lists:flatten(io_lib:format("v~2..0b", [X]))).
 
-%%%%%%%%%%%%%%% generators %%%%%%%%%%%%%%%%%%
+-spec cgraph_to_digraph(cgraph()) -> digraph().
+cgraph_to_digraph(CG) ->
+    {digraph, DG} = cgraph_to_digraph0(CG),
+    DG.
 
-pos() ->
-    non_neg_integer().
+cgraph_to_digraph0(cgraph) ->
+    {digraph, digraph:new()};
+cgraph_to_digraph0({{node, Root, Id}, {digraph, DG}}) ->
+    digraph:add_vertex(DG, i2a(Id)),
+    digraph:add_edge(DG, i2a(Root), i2a(Id)),
+    digraph:add_edge(DG, i2a(Id), i2a(Root)),
+    {digraph, DG};
+cgraph_to_digraph0({{edge, A, B}, {digraph, DG}}) ->
+    digraph:add_edge(DG, i2a(A), i2a(B)),
+    digraph:add_edge(DG, i2a(B), i2a(A)),
+    {digraph, DG};
+cgraph_to_digraph0({Op, Chain}) ->
+    cgraph_to_digraph0({Op, cgraph_to_digraph0(Chain)}).
+
+cgraph_with_dead_is_connected({Kill, _Root, CG}) ->
+    DG = cgraph_to_digraph(CG),
+    [ digraph:del_vertex(DG, i2a(K)) || K <- Kill ],
+    Res = is_connected(DG),
+    digraph:delete(DG),
+    Res.
+
+
+pos(N) ->
+    integer(0, N).
+
+cgraph_faulty() ->
+    ?SIZED(S, ?SUCHTHAT(X, cgraph_root_with_dead(S), cgraph_with_dead_is_connected(X))).
+
+cgraph_root_with_dead(S) ->
+    ?SUCHTHAT(X, cgraph_with_dead(S), root_not_killed(X)).
+
+root_not_killed({Kill, Root, _CG}) ->
+    not lists:member(Root, Kill).
+
+cgraph_with_dead(S) ->
+    %%{resize(trunc(S * (2/3)), list(pos(S))), pos(S), cgraph(S)}.
+    ?LET(SS, pos(S), {vector(SS, pos(S)), pos(S), cgraph(S)}).
 
 cgraph() ->
-    ?SIZED(S, cgraph(S)).
+    ?SIZED(S, clean_cgraph(S)).
+
+clean_cgraph(S) ->
+    {[], pos(S), cgraph(S)}.
+
+rand_list(K, Max) ->
+    vector(K, pos(Max)).
 
 cgraph(0) ->
-    {'graph', [[]]};
+    {{'node', 0, 0}, 'cgraph'};
 cgraph(S) ->
     frequency([
-               {3, ?LAZY({{'node', pos()}, cgraph(S-1)})},
-               {1, ?LAZY({{'edge', pos(), pos()}, cgraph(S-1)})}
+               {10, ?LAZY({{'node', pos(S-1), S}, cgraph(S-1)})},
+               {0, ?LAZY({{'edge', pos(S), pos(S)}, cgraph(S)})}
               ]).
