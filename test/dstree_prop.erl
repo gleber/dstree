@@ -28,8 +28,8 @@
 %%                                      io:fwrite(user, "[~2..0b:~2..0b:~2..0b.~3..0b] -- " ++ Format ++ "~n", [__Hh, __Mm, __Ss, __MS div 1000] ++ Args)
 %%                              end)())).
 
--define(QC(Arg), proper:quickcheck(Arg, [{numtests, 500},
-                                         {constraint_tries, 100},
+-define(QC(Arg), proper:quickcheck(Arg, [{numtests, 1000},
+                                         {constraint_tries, 500},
                                          {on_output, fun printer/2}])).
 
 -type pos() :: non_neg_integer().
@@ -49,9 +49,11 @@ prop_basic() ->
 test_prop_unstable() ->
     true = ?QC(dstree_prop:prop_unstable()).
 prop_unstable() ->
-    ?TRAPEXIT(?FORALL(X, cgraph_faulty(),
-                      run_test(X)
-                     )).
+    ?FORALL(X, cgraph_faulty(),
+            ?WHENFAIL(describe_problem(X),
+                      ?TRAPEXIT(run_test(X))
+                     )
+           ).
 
 printer(F, A) ->
     io:format(user, F, A).
@@ -88,7 +90,18 @@ setup_connections(L, DG) ->
     [ dstree_tests:connect(X, Y) || X <- L, Y <- digraph:out_neighbours(DG, X) ].
 
 run_test(Problem) ->
-    lists:all(fun run_once/1, lists:duplicate(10, Problem)).
+    lists:all(fun run_once/1, lists:duplicate(3, Problem)).
+
+describe_problem({Killed, Root, CGraph} = Problem) ->
+    DG = cgraph_to_digraph(CGraph),
+    io:format("Graph:~n", []),
+    dstree_tests:print_graph(DG),
+    io:format("Root: ~p~n", [Root]),
+    io:format("Killed: ~w~n", [lists:usort(Killed)]),
+    io:format("Final graph:~n", []),
+    [ digraph:del_vertex(DG, i2a(K)) || K <- Killed ],
+    dstree_tests:print_graph(DG),
+    digraph:delete(DG).
 
 run_once({Kill0, Root0, CGraph} = _Problem) ->
     Kill = lists:usort(Kill0),
@@ -117,7 +130,8 @@ run_once({Kill0, Root0, CGraph} = _Problem) ->
                 Match = match_graphs(DG, Killable, Tree),
                 digraph:delete(Tree),
                 Match;
-            _ ->
+            {false, Slowpokes} ->
+                io:format("Slowpokes: ~p~n", [Slowpokes]),
                 false
         end,
     [ dstree_server:stop(X) || X <- Left ],
@@ -144,7 +158,7 @@ match_graphs(Original, Killed, Result) ->
         [ begin
               ON = ordsets:from_list(digraph:out_neighbours(Original, V)),
               RN = ordsets:from_list(digraph:out_neighbours(Result, V)),
-              true = ordsets:is_subset(RN, ON)
+              ordsets:is_subset(RN, ON)
           end || V <- ResultVertices ],
     [true] == lists:usort(Res).
 
@@ -183,7 +197,7 @@ wait_for(T, L, Timeout) ->
             end
     after Timeout ->
             ?DBG("TIMEOUT ~p", [L]),
-            false
+            {false, L}
     end.
 
 tree_to_digraph({Id, Children}) ->

@@ -64,6 +64,7 @@ process(#forward{origin= Origin, sender = Sender, visited = Visited},
                 id = I,
                 neighbors = Neighbors} = State) ->
     ?DBG("~p got forward (~p)", [I, Origin]),
+    io:format("> ~p~n", [I]),
     check(State#dstree{status = waiting,
                        parent = Sender,
                        neighbors = m(Neighbors, Visited),
@@ -83,6 +84,7 @@ process(#forward{origin = MOrigin, sender = Sender, visited = Visited},
                 origin = Origin} = State) ->
     if MOrigin > Origin orelse Origin == undefined ->
             ?DBG("~p got forward (~p)", [I, MOrigin]),
+            io:format("> ~p~n", [I]),
             check(State#dstree{parent = Sender,
                                neighbors = m(Neighbors,Visited),
                                origin = MOrigin,
@@ -101,6 +103,7 @@ process(#return{origin = X, sender = Sender, visited = Visited, subtree = Return
                 id = _I} = State0) when X == Origin ->
     Children2 = m(Children, [Sender]),
     State = maybe_cancel_wait(Sender, State0#dstree{children = Children2}),
+    io:format("< ~p~n", [_I]),
     ?DBG("~p got return (~p)", [_I, Origin]),
     Subtree2 = merge_subtree(Children2, Subtree, ReturnSubtree),
     State2 = State#dstree{subtree = Subtree2},
@@ -119,7 +122,7 @@ process(#working{sender = Child, visited = Visited, waiting_for = Slowpoke} = _M
                 id = I} = State0) ->
     ?DBG("at ~p some child of ~p is slow ~p ~n", [I, Child, Slowpoke]),
     State = maybe_cancel_wait(Child, State0),
-    wait(Child, 2, Visited, State);
+    wait(Child, 4, Visited, State);
 
 process(#timeout{dead = Dead, visited = Visited, attempt = At} = _Msg, %% one of children seems to be taking long to answer
         #dstree{status = waiting,
@@ -150,6 +153,7 @@ process(#finished{origin = X, sender = Sender, tree = Tree} = Msg,
         #dstree{status = finishing,
                 id = I,
                 origin = Origin} = State0) when X == Origin ->
+    io:format("= ~p~n", [I]),
     ?DBG("at ~p final tree is ~p~n", [I, Tree]),
     State = maybe_cancel_wait(Sender, State0),
     broadcast(Msg#finished{sender = I}, State),
