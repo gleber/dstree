@@ -104,6 +104,7 @@ describe_problem({Killed, Root, CGraph} = Problem) ->
     digraph:delete(DG).
 
 run_once({Kill0, Root0, CGraph} = _Problem) ->
+    io:format("~n"),
     Kill = lists:usort(Kill0),
     Root = i2a(Root0),
     ?DBG("Root: ~p~n", [Root]),
@@ -137,8 +138,11 @@ run_once({Kill0, Root0, CGraph} = _Problem) ->
     [ dstree_server:stop(X) || X <- Left ],
     wait_for_dead(Pids),
     digraph:delete(DG),
-    [ catch exit(whereis(dstree_prop:i2a(I)), kill) || I <- lists:seq(0, 1000) ],
+    killall(),
     RR.
+
+killall() ->
+    [ catch exit(whereis(dstree_prop:i2a(I)), kill) || I <- lists:seq(0, 1000) ].    
 
 is_critical(DG, V) ->
     Vs = digraph:vertices(DG),

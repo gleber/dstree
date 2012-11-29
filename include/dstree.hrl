@@ -3,6 +3,8 @@
          status = initial,
          z1 = xxx_origin,
          origin,
+         z20 = xxx_depth,
+         depth = 0,
          z2 = xxx_parent,
          parent,
          z3 = xxx_children,
