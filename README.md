@@ -1,8 +1,49 @@
+*DRAFT*
+
 # Distributed spanning tree #
 
 This simple implementation is based on token-passing paradigm with
-optimistic approach to failure handling. System uses four message
-types:
+optimistic approach to failure handling. 
+
+# Building #
+
+To build everything:
+- `rebar compile`
+or
+- `make`
+
+To run tests:
+- `rebar eunit`
+or
+- `make tests
+
+To run shell:
+- `make sh`
+
+# Reliability #
+
+System has been tested using Proper/Quickcheck tests based on the
+following approach:
+
+1. randomly create a graph with few cycles
+2. start up as many processes as there are nodes in the graph
+3. establish connections between processes according to edges in the
+graph
+4. (optional) kill some of processes
+5. start distributed spanning tree search procedure
+6. check resulting spanning tree to be
+   - consistent between all processes in the graph
+   - done in limited amount of time
+
+System is able to handle around 800 tests before starting to fail when
+there are around 30+ nodes in the graph. Looks like that more
+sophisticated testing procedure (McErlang, PULSE or Concuerror) is
+needed to find the bug.
+
+# Implementation #
+
+System uses four message types:
+
 1. forward
 2. return
 3. finished
