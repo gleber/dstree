@@ -15,7 +15,7 @@ or
 To run tests:
 - `rebar eunit`
 or
-- `make tests
+- `make tests`
 
 To run shell:
 - `make sh`
