@@ -28,7 +28,7 @@
 %%                                      io:fwrite(user, "[~2..0b:~2..0b:~2..0b.~3..0b] -- " ++ Format ++ "~n", [__Hh, __Mm, __Ss, __MS div 1000] ++ Args)
 %%                              end)())).
 
--define(QC(Arg), proper:quickcheck(Arg, [{numtests, 1000},
+-define(QC(Arg), proper:quickcheck(Arg, [{numtests, 500},
                                          {constraint_tries, 500},
                                          {on_output, fun printer/2}])).
 
@@ -229,8 +229,11 @@ is_connected(DG) ->
 
 %%%%%%%%%%%%%%% generators %%%%%%%%%%%%%%%%%%
 i2a(X) -> index_to_atom(X).
-index_to_atom(X) ->
-    list_to_atom(lists:flatten(io_lib:format("v~2..0b", [X]))).
+index_to_atom(X) when is_number(X) ->
+    list_to_atom(lists:flatten(io_lib:format("v~2..0b", [X])));
+index_to_atom(A) when is_atom(A) ->
+    [$v, _, _] = atom_to_list(A),
+    A.
 
 -spec cgraph_to_digraph(cgraph()) -> digraph().
 cgraph_to_digraph(CG) ->
@@ -239,12 +242,18 @@ cgraph_to_digraph(CG) ->
 
 cgraph_to_digraph0(cgraph) ->
     {digraph, digraph:new()};
-cgraph_to_digraph0({{node, Root, Id}, {digraph, DG}}) ->
+cgraph_to_digraph0({{del_node, Id}, {digraph, DG}}) ->
+    digraph:del_vertex(DG, Id),
+    {digraph, DG};
+cgraph_to_digraph0({{add_node, Root, Id}, {digraph, DG}}) ->
     digraph:add_vertex(DG, i2a(Id)),
     digraph:add_edge(DG, i2a(Root), i2a(Id)),
     digraph:add_edge(DG, i2a(Id), i2a(Root)),
     {digraph, DG};
-cgraph_to_digraph0({{edge, A, B}, {digraph, DG}}) ->
+cgraph_to_digraph0({{add_node, Id}, {digraph, DG}}) ->
+    digraph:add_vertex(DG, i2a(Id)),
+    {digraph, DG};
+cgraph_to_digraph0({{add_edge, A, B}, {digraph, DG}}) ->
     digraph:add_edge(DG, i2a(A), i2a(B)),
     digraph:add_edge(DG, i2a(B), i2a(A)),
     {digraph, DG};
@@ -254,6 +263,12 @@ cgraph_to_digraph0({Op, Chain}) ->
 cgraph_with_dead_is_connected({Kill, _Root, CG}) ->
     DG = cgraph_to_digraph(CG),
     [ digraph:del_vertex(DG, i2a(K)) || K <- Kill ],
+    Res = is_connected(DG),
+    digraph:delete(DG),
+    Res.
+
+cgraph_is_connected(CG) ->
+    DG = cgraph_to_digraph(CG),
     Res = is_connected(DG),
     digraph:delete(DG),
     Res.
@@ -285,9 +300,9 @@ rand_list(K, Max) ->
     vector(K, pos(Max)).
 
 cgraph(0) ->
-    {{'node', 0, 0}, 'cgraph'};
+    {{'add_node', 0, 0}, 'cgraph'};
 cgraph(S) ->
     frequency([
-               {10, ?LAZY({{'node', pos(S-1), S}, cgraph(S-1)})},
-               {0, ?LAZY({{'edge', pos(S), pos(S)}, cgraph(S)})}
+               {10, ?LAZY({{'add_node', pos(S-1), S}, cgraph(S-1)})},
+               {0, ?LAZY({{'add_edge', pos(S), pos(S)}, cgraph(S)})}
               ]).

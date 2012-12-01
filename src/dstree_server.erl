@@ -17,10 +17,10 @@
 %%
 
 start(Owner, Opts) ->
-    gen_server:start_link(dstree_server, [Owner, Opts], []).
+    gen_server:start(dstree_server, [Owner, Opts], []).
 
 start(Owner, Id, Opts) ->
-    gen_server:start_link(dstree_server, [Owner, Id, Opts], []).
+    gen_server:start(dstree_server, [Owner, Id, Opts], []).
 
 stop(Ref) ->
     gen_server:call(Ref, stop).
