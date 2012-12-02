@@ -9,7 +9,7 @@
 -export([actor_up/1, actor_up/2,
          actor_down/1,
          actor_connect/2,
-         actor_search/1]).
+         actor_search/2]).
 
 -include_lib("proper/include/proper.hrl").
 
@@ -26,19 +26,16 @@
 prop_dstree() ->
     ?FORALL(Cmds, commands(?MODULE),
             ?TRAPEXIT(begin
-                          %% io:format("Cmds: ~p~n", [Cmds]),
-                          {H, #state{actors = Actors, graph = G} = S,Res} = run_commands(?MODULE, Cmds),
-                          %% {true, Tree} = actor_search(oneof(Actors)),
+                          {H, #state{actors = Actors, graph = G} = S, Res} = run_commands(?MODULE, Cmds),
                           dstree_prop:killall(),
                           ?WHENFAIL(
-                             io:format("History: ~w\nState: ~w\nRes: ~w\n",
-                                       [H, S, Res]),
+                             io:format("History: ~p~nCommands: ~p~nGraph: ~s~nRes: ~w\n",
+                                       [H, Cmds, dstree_tests:graph_to_str(dstree_prop:cgraph_to_digraph(G)), Res]),
                              aggregate(command_names(Cmds), Res =:= ok))
                       end)).
 
 
-actor_up(N) ->
-    Id = i2a(N),
+actor_up(Id) ->
     Owner = self(),
     {ok, P} = dstree_server:start(Owner, Id, [{send_fn, fun dstree_prop:fast_send/3},
                                               %% {report_fn, report_fun(Owner, make_nop(2))}
@@ -46,25 +43,33 @@ actor_up(N) ->
                                              ]),
     erlang:monitor(process, P),
     register(Id, P),
-    P.
+    Id.
 
-actor_up(N, Rooted) ->
-    actor_up(N),
-    actor_connect(i2a(N), Rooted).
+actor_up(Id, Rooted) ->
+    actor_up(Id),
+    actor_connect(Id, Rooted),
+    Id.
 
 actor_down(Id) ->
     dstree_server:stop(Id).
 
 actor_connect(A, B) ->
+    dstree_server:add_edge(B, A),
     dstree_server:add_edge(A, B).
 
-actor_search(A) ->
+actor_search(Actors, A) ->
     dstree_server:search(A),
     receive
         {ok, A, Tree} ->
-            {true, Tree}
+            Other = [ receive {ok, X, _} -> true after 1000 -> false end || X <- Actors -- [A] ],
+            case lists:usort(Other) of
+                [true] ->
+                    {true, Tree};
+                _ ->
+                    false
+            end
     after
-        5000 ->
+        1000 ->
             false
     end.
 
@@ -78,28 +83,20 @@ initial_state() ->
     #state{graph = 'cgraph'}.
 
 command(#state{actors = [],n = N}) ->
-    {call,?MODULE,actor_up,[N+1]};
+    {call,?MODULE,actor_up,[i2a(N+1)]};
 command(#state{actors = Actors, n = N, root = _Root, graph = G} = _S) ->
-    %% ?LET({Key,Value}, weighted_union([{2, elements(State)},
-    %%                                {1, {key(),integer()}}]),
-    %%      oneof([{call,erlang,put,[Key,Value]},
-    %%          {call,erlang,get,[Key]},
-    %%          {call,erlang,erase,[Key]}
-    %%            ])),
     F = [
-         %% [{5, {call,?MODULE,actor_search,[oneof(Actors)]}}],
-         {5, {call,?MODULE,actor_up,[N + 1, oneof(Actors)]}},
-         {1, {call,?MODULE,actor_down,[oneof(Actors)]}},
-         {1, {call,?MODULE,actor_connect,[oneof(Actors), oneof(Actors)]}},
-         [{10, {call,?MODULE,actor_search,[oneof(Actors)]}} || dstree_prop:cgraph_is_connected(G) ]
+         {5,   {call,?MODULE,actor_up,[i2a(N + 1), oneof(Actors)]}},
+         {1,   {call,?MODULE,actor_down,[oneof(Actors)]}},
+         {1,   {call,?MODULE,actor_connect,[oneof(Actors), oneof(Actors)]}},
+         [{10, {call,?MODULE,actor_search,[Actors, oneof(Actors)]}} || dstree_prop:cgraph_is_connected(G) ]
         ],
 
     frequency(lists:flatten(F)).
 
 precondition(#state{root = Root, graph = G} = State,
-             {call,?MODULE,actor_search,[Id]}) ->
+             {call,?MODULE,actor_search,[_Actors, Id]}) ->
     lists:member(Id, State#state.actors) andalso
-        Root == undefined andalso
         dstree_prop:cgraph_is_connected(G);
 precondition(State,
              {call,?MODULE,actor_down,[Id]}) ->
@@ -109,21 +106,23 @@ precondition(State,
     A /= B andalso
         lists:member(A, State#state.actors) andalso
         lists:member(B, State#state.actors);
+precondition(State,
+             {call,?MODULE,actor_up,[A, Root]}) ->
+    Root /= A andalso
+        lists:member(Root, State#state.actors) andalso
+        not lists:member(A, State#state.actors);
 precondition(_, _) ->
     true.
 
-%% postcondition(State, {call,erlang,put,[Key,_]}, undefined) ->
-%%     not proplists:is_defined(Key, State);
-%% postcondition(State, {call,erlang,put,[Key,_]}, Old) ->
-%%     {Key,Old} =:= proplists:lookup(Key, State);
-%% postcondition(State, {call,erlang,get,[Key]}, Val) ->
-%%     {Key,Val} =:= proplists:lookup(Key, State);
-%% postcondition(State, {call,erlang,erase,[Key]}, Val) ->
-%%     {Key,Val} =:= proplists:lookup(Key, State);
-postcondition(#state{}, {call, ?MODULE, actor_search, [Id]}, Tree) ->
-    case Tree of
+postcondition(#state{actors = Actors, graph = G}, {call, ?MODULE, actor_search, [_Actors, Id]}, Res) ->
+    case Res of
         {true, T} ->
-            true;
+            Resulting = dstree_prop:tree_to_digraph(T),
+            Graph = dstree_prop:cgraph_to_digraph(G),
+            M = dstree_prop:match_graphs(Graph, Resulting),
+            digraph:delete(Graph),
+            digraph:delete(Resulting),
+            M;
         false ->
             false
     end;
@@ -154,5 +153,5 @@ next_state(#state{graph = G} = State, _Var,
     State#state{graph = G2};
 
 next_state(#state{} = State, _Var,
-           {call, ?MODULE, actor_search, [Root]}) ->
+           {call, ?MODULE, actor_search, [_, Root]}) ->
     State#state{}. %% root = Root

@@ -4,12 +4,41 @@
 
 -define(DBG(Format, Args), io:fwrite(user, "~p:~p -- " ++ Format, [?MODULE, ?LINE] ++ Args)).
 
--export([connect/2, print_graph/1, print_graph_paths/2]).
+-export([connect/2, print_graph/1, graph_to_str/1, print_graph_paths/2]).
 
 setup() ->
     ok.
 cleanup(_) ->
     ok.
+
+double_search_test() ->
+    dstree_statem:actor_up(v01),
+    dstree_statem:actor_up(v02, v01),
+    dstree_server:search(v01),
+    Res = receive
+              {ok, v01, Tree} ->
+                  {true, Tree}
+          after
+              1000 ->
+                  timeout
+          end,
+    receive {ok, v02, _} -> ok end,
+    ?assertMatch({true, {v01, [{v02, []}]}}, Res),
+    dstree_statem:actor_up(v03, v01),
+    dstree_server:search(v02),
+    Res2 = receive
+               {ok, v02, Tree2} ->
+                   {true, Tree2}
+           after
+               1000 ->
+                   timeout
+           end,
+    receive {ok, v01, _} -> ok end,
+    receive {ok, v03, _} -> ok end,
+    ?assertMatch({true, {v02, [{v01, [{v03, []}]}]}}, Res2),
+    dstree_prop:killall(),
+    ok.
+    
 
 statem_test_() ->
     {timeout, 5000, fun dstree_statem:test/0}.
@@ -56,6 +85,13 @@ print_graph(G) ->
           N = lists:sort(digraph:out_neighbours(G, X)),
           io:format("~p -> ~p~n", [X, N])
       end || X <- V ].
+
+graph_to_str(G) ->
+    V = lists:sort(digraph:vertices(G)),
+    R = [ {X, lists:sort(digraph:out_neighbours(G, X))} || X <- V ],
+    digraph:delete(G),
+    [ io_lib:format("~p -> ~p~n", [X, N])
+      || {X, N} <- R ].
 
 print_graph_paths(G, Root) ->
     V = lists:sort(digraph:vertices(G)),

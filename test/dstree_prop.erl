@@ -142,7 +142,8 @@ run_once({Kill0, Root0, CGraph} = _Problem) ->
     RR.
 
 killall() ->
-    [ catch exit(whereis(dstree_prop:i2a(I)), kill) || I <- lists:seq(0, 1000) ].    
+    [ catch exit(whereis(dstree_prop:i2a(I)), kill) || I <- lists:seq(0, 1000) ],
+    ok1.
 
 is_critical(DG, V) ->
     Vs = digraph:vertices(DG),
@@ -157,14 +158,18 @@ match_graphs(Original, Result) ->
 match_graphs(Original, Killed, Result) ->
     OriginalVertices = lists:sort(digraph:vertices(Original)) -- Killed,
     ResultVertices = lists:sort(digraph:vertices(Result)),
-    OriginalVertices = ResultVertices,
-    Res =
-        [ begin
-              ON = ordsets:from_list(digraph:out_neighbours(Original, V)),
-              RN = ordsets:from_list(digraph:out_neighbours(Result, V)),
-              ordsets:is_subset(RN, ON)
-          end || V <- ResultVertices ],
-    [true] == lists:usort(Res).
+    case OriginalVertices of
+        ResultVertices ->
+            Res =
+                [ begin
+                      ON = ordsets:from_list(digraph:out_neighbours(Original, V)),
+                      RN = ordsets:from_list(digraph:out_neighbours(Result, V)),
+                      ordsets:is_subset(RN, ON)
+                  end || V <- ResultVertices ],
+            [true] == lists:usort(Res);
+        _ ->
+            false
+    end.
 
 make_nop(1) ->
     fun(_) -> ok end;
@@ -203,6 +208,17 @@ wait_for(T, L, Timeout) ->
             ?DBG("TIMEOUT ~p", [L]),
             {false, L}
     end.
+
+tree_nodes(Tree) ->
+    tree_nodes(Tree, []).
+
+tree_nodes({Id, Children}, Ns) ->
+    tree_nodes(Children, [Id | Ns]);
+tree_nodes([C|R], Ns) ->
+    Ns2 = tree_nodes(C, Ns),
+    tree_nodes(R, Ns);
+tree_nodes([], Ns) ->
+    [].
 
 tree_to_digraph({Id, Children}) ->
     DG = digraph:new([acyclic]),
