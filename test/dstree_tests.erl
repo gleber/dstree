@@ -9,36 +9,52 @@
 setup() ->
     ok.
 cleanup(_) ->
+    dstree_prop:killall(),
     ok.
 
 double_search_test() ->
     dstree_statem:actor_up(v01),
     dstree_statem:actor_up(v02, v01),
-    dstree_server:search(v01),
-    Res = receive
-              {ok, v01, Tree} ->
-                  {true, Tree}
-          after
-              1000 ->
-                  timeout
-          end,
-    receive {ok, v02, _} -> ok end,
-    ?assertMatch({true, {v01, [{v02, []}]}}, Res),
+    {ok, TreeA} = dstree_server:sync_search(v01),
+    {ok, TreeA2} = dstree_server:wait(v02),
+    ?assertMatch({v01, [{v02, []}]}, TreeA),
+    ?assertMatch(TreeA, TreeA2),
     dstree_statem:actor_up(v03, v01),
-    dstree_server:search(v02),
-    Res2 = receive
-               {ok, v02, Tree2} ->
-                   {true, Tree2}
-           after
-               1000 ->
-                   timeout
-           end,
-    receive {ok, v01, _} -> ok end,
-    receive {ok, v03, _} -> ok end,
-    ?assertMatch({true, {v02, [{v01, [{v03, []}]}]}}, Res2),
+    {ok, TreeB} = dstree_server:sync_search(v02),
+    {ok, TreeB2} = dstree_server:wait(v01),
+    {ok, TreeB3} = dstree_server:wait(v03),
+    ?assertMatch({v02, [{v01, [{v03, []}]}]}, TreeB),
+    ?assertMatch(TreeB, TreeB2),
+    ?assertMatch(TreeB, TreeB3),
     dstree_prop:killall(),
     ok.
-    
+
+triple_search_test() ->
+    %% v01 <-> v02 <-> v03
+    %% [{set,{var,1},{call,dstree_statem,actor_up,[v01]}},
+    %%  {set,{var,2},{call,dstree_statem,actor_up,[v02,v01]}},
+    %%  {set,{var,3},{call,dstree_statem,actor_up,[v03,v02]}},
+    %%  {set,{var,4},{call,dstree_statem,actor_search,[[v03,v02,v01],v02]}},
+    %%  {set,{var,7},{call,dstree_statem,actor_search,[[v05,v04,v03,v02,v01],v03]}}]
+    dstree_prop:killall(),
+    dstree_statem:actor_up(v01),
+    dstree_statem:actor_up(v02, v01),
+    dstree_statem:actor_up(v03, v02),
+    {ok, TreeA2} = dstree_server:sync_search(v02),
+    {ok, TreeA1} = dstree_server:wait(v01),
+    {ok, TreeA3} = dstree_server:wait(v03),
+    ?assertMatch({v02, [{v01, []}, {v03, []}]}, TreeA2),
+    ?assertMatch(TreeA1, TreeA2),
+    ?assertMatch(TreeA3, TreeA2),
+    {ok, TreeB3} = dstree_server:sync_search(v03),
+    {ok, TreeB1} = dstree_server:wait(v01),
+    {ok, TreeB2} = dstree_server:wait(v02),
+    ?assertMatch({v03, [{v02, [{v01, []}]}]}, TreeB3),
+    ?assertMatch(TreeB1, TreeB3),
+    ?assertMatch(TreeB2, TreeB3),
+    dstree_prop:killall(),
+    ok.
+
 
 statem_test_() ->
     {timeout, 5000, fun dstree_statem:test/0}.
@@ -56,7 +72,7 @@ statem_test_() ->
 %%              P = {[1,7,9,9,4,10],12,{{node,0,15},{{node,2,14},{{node,0,13},{{node,5,12},{{node,0,11},{{node,2,10},{{node,0,9},{{node,0,8},{{node,2,7},{{node,0,6},{{node,0,5},{{node,2,4},{{node,0,3},{{node,0,2},{{node,0,1},{{node,0,0},cgraph}}}}}}}}}}}}}}}}},
 %%              true = dstree_prop:run_once(P)
 %%      end}.
-    
+
 %% more_test_() ->
 %%     {timeout, 5000,
 %%      fun() ->
@@ -103,4 +119,3 @@ print_graph_paths(G, Root) ->
 connect(X, Y) ->
     dstree_server:add_edge(X, Y),
     dstree_server:add_edge(Y, X).
-
