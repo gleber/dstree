@@ -2,6 +2,8 @@
 
 -behaviour(proper_statem).
 
+-compile({parse_transform, cut}).
+
 -export([test/0, test/1]).
 -export([initial_state/0, command/1, precondition/2, postcondition/3,
          next_state/3]).
@@ -26,21 +28,30 @@
 prop_dstree() ->
     ?FORALL(Cmds, commands(?MODULE),
             ?TRAPEXIT(begin
-                          {H, #state{actors = Actors, graph = G} = S, Res} = run_commands(?MODULE, Cmds),
+                          {H, #state{actors = Actors, graph = G} = _S, Res} = run_commands(?MODULE, Cmds),
                           dstree_prop:killall(),
                           ?WHENFAIL(
-                             io:format("History: ~p~nCommands: ~p~nGraph: ~s~nRes: ~w\n",
-                                       [H, Cmds, dstree_tests:graph_to_str(dstree_prop:cgraph_to_digraph(G)), Res]),
+                             io:format("History: ~p~nCommands: ~p~nGraph: ~s~nActors: ~p~nRes: ~w\n",
+                                       [H, Cmds, dstree_tests:graph_to_str(dstree_prop:cgraph_to_digraph(G)), Actors, Res]),
                              aggregate(command_names(Cmds), Res =:= ok))
+                      end)).
+
+prop_parallel_dstree() ->
+    ?FORALL(Cmds, proper_statem:parallel_commands(?MODULE),
+            ?TRAPEXIT(begin
+                          {Sequential, Parallel, Res} = proper_statem:run_parallel_commands(?MODULE, Cmds),
+                          dstree_prop:killall(),
+                          ?WHENFAIL(
+                             io:format("Cmds: ~p~nSeq: ~p~nParallel: ~p~nRes: ~w\n",
+                                       [Cmds, Sequential, Parallel, Res]),
+                             Res =:= ok)
                       end)).
 
 
 actor_up(Id) ->
     Owner = self(),
     {ok, P} = dstree_server:start(Owner, Id, [{send_fn, fun dstree_prop:fast_send/3},
-                                              %% {report_fn, report_fun(Owner, make_nop(2))}
-                                              {report_fn, dstree_prop:report_fun(Owner, fun io:format/2)}
-                                             ]),
+                                              {expand_neighbors, false}]), %% it has to be false for tests, otherwise it's nearly impossible to compare graphs
     erlang:monitor(process, P),
     register(Id, P),
     Id.
@@ -57,27 +68,15 @@ actor_connect(A, B) ->
     dstree_server:add_edge(B, A),
     dstree_server:add_edge(A, B).
 
-actor_search(Actors, A) ->
-    dstree_server:search(A),
-    receive
-        {ok, A, Tree} ->
-            Other = [ receive {ok, X, _} -> true after 1000 -> false end || X <- Actors -- [A] ],
-            case lists:usort(Other) of
-                [true] ->
-                    {true, Tree};
-                _ ->
-                    false
-            end
-    after
-        1000 ->
-            false
-    end.
+actor_search(_Actors, A) ->
+    {ok, Tree} = dstree_server:sync_search(A, 1000),
+    {true, Tree}.
 
 test() ->
     test(100).
 
 test(N) ->
-    true = proper:quickcheck(?MODULE:prop_dstree(), N).
+    true = proper:quickcheck(?MODULE:prop_parallel_dstree(), N).
 
 initial_state() ->
     #state{graph = 'cgraph'}.
@@ -94,7 +93,7 @@ command(#state{actors = Actors, n = N, root = _Root, graph = G} = _S) ->
 
     frequency(lists:flatten(F)).
 
-precondition(#state{root = Root, graph = G} = State,
+precondition(#state{root = _Root, graph = G} = State,
              {call,?MODULE,actor_search,[_Actors, Id]}) ->
     lists:member(Id, State#state.actors) andalso
         dstree_prop:cgraph_is_connected(G);
@@ -116,13 +115,28 @@ precondition(_, _) ->
 
 postcondition(#state{actors = Actors, graph = G}, {call, ?MODULE, actor_search, [_Actors, Id]}, Res) ->
     case Res of
-        {true, T} ->
-            Resulting = dstree_prop:tree_to_digraph(T),
+        {true, Tree} ->
+            Resulting = dstree_prop:tree_to_digraph(Tree),
             Graph = dstree_prop:cgraph_to_digraph(G),
             M = dstree_prop:match_graphs(Graph, Resulting),
             digraph:delete(Graph),
             digraph:delete(Resulting),
-            M;
+            case M of
+                false ->
+                    false;
+                true ->
+                    Results = [ {Id, Tree} | [ begin
+                                                  {ok, T} = dstree_server:wait(X, 1000),
+                                                  {X, T}
+                                              end || X <- Actors -- [Id] ]],
+                    case lists:usort(lists:map(element(2, _), Results)) of
+                        [Tree] ->
+                            true;
+                        _ ->
+                            io:format("Some actors return bad values: ~p~n", [Results]),
+                            false
+                    end
+            end;
         false ->
             false
     end;
@@ -153,5 +167,5 @@ next_state(#state{graph = G} = State, _Var,
     State#state{graph = G2};
 
 next_state(#state{} = State, _Var,
-           {call, ?MODULE, actor_search, [_, Root]}) ->
+           {call, ?MODULE, actor_search, [_, _Root]}) ->
     State#state{}. %% root = Root
