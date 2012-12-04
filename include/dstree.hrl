@@ -8,6 +8,7 @@
          neighbors = ordsets:new(),
          subtree = orddict:new(),
          dead = ordsets:new(),
+         expand_neighbors = false,
          tree,
          waiting_timeout,
          waiting_for,

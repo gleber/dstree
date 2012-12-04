@@ -13,6 +13,9 @@
 
 -define(DBG(Format, Args), ok).
 
+-define(FLOW(Format, Args), ok).
+%% -define(FLOW(Format, Args), io:format(Format, Args)).
+
 %% -define(DBG(Format, Args), ((fun() ->
 %%                                      __Now = now(),
 %%                                      {_, _, __MS} = __Now,
@@ -29,6 +32,7 @@ default_report(_State) ->
 
 new(I, Opts) ->
     Neighbors = proplists:get_value(neighbors, Opts, []),
+    ExpandNeighbors = proplists:get_value(expand_neighbors, Opts, false),
     SendFn = proplists:get_value(send_fn, Opts, fun default_send/3),
     ReportFn = proplists:get_value(report_fn, Opts, fun default_report/1),
     Timeout = proplists:get_value(timeout, Opts, ?TIMEOUT),
@@ -38,6 +42,7 @@ new(I, Opts) ->
             send_fun = SendFn,
             report_fun = ReportFn,
             waiting_timeout = Timeout,
+            expand_neighbors = ExpandNeighbors,
             neighbors = ordsets:from_list(Neighbors)}.
 
 add_edge(Id, #dstree{id = Id} = State) ->
@@ -64,13 +69,18 @@ search(#dstree{id = Id} = State) ->
 process(#forward{origin= Origin, sender = Sender, visited = Visited, depth = D},
         #dstree{status = initial,
                 id = I,
+                expand_neighbors = ExpandNeighbors,
                 neighbors = Neighbors} = State0) ->
     State = State0#dstree{depth = D},
     ?DBG("~p got forward (~p)", [I, Origin]),
-    io:format("~s> ~p~n", [?IND, I]),
+    ?FLOW("~s> ~p~n", [?IND, I]),
+    Neighbors2 = case ExpandNeighbors of
+                     true -> m(Neighbors, Visited);
+                     false -> Neighbors
+                 end,
     check(State#dstree{status = waiting,
                        parent = Sender,
-                       neighbors = m(Neighbors, Visited),
+                       neighbors = Neighbors2,
                        origin = Origin,
                        depth = D,
                        tree = undefined,
@@ -88,7 +98,7 @@ process(#forward{origin = MOrigin, sender = Sender, visited = Visited, depth = D
                 origin = Origin} = State) ->
     if MOrigin > Origin orelse Origin == undefined ->
             ?DBG("~p got forward (~p)", [I, MOrigin]),
-            io:format("~s> ~p~n", [?IND, I]),
+            ?FLOW("~s> ~p~n", [?IND, I]),
             check(State#dstree{parent = Sender,
                                neighbors = m(Neighbors,Visited),
                                origin = MOrigin,
@@ -108,7 +118,7 @@ process(#return{origin = X, sender = Sender, visited = Visited, subtree = Return
                 id = _I} = State0) when X == Origin ->
     Children2 = m(Children, [Sender]),
     State = maybe_cancel_wait(Sender, State0#dstree{children = Children2}),
-    io:format("~s< ~p~n", [?IND, _I]),
+    ?FLOW("~s< ~p~n", [?IND, _I]),
     ?DBG("~p got return (~p)", [_I, Origin]),
     Subtree2 = merge_subtree(Children2, Subtree, ReturnSubtree),
     State2 = State#dstree{subtree = Subtree2},
@@ -142,7 +152,7 @@ process(#timeout{dead = Dead, visited = Visited, attempt = _At, ref = R} = _Msg,
                 id = I} = State0) when HalfRef /= undefined ->
     State = State0#dstree{waiting_for = {Dead, undefined, Ref}},
     ?DBG("at ~p child is slow ~p (~p)~n", [I, Dead, At]),
-    io:format("~ss ~p        (per ~p)~n", [?IND, Dead, I]),
+    ?FLOW("~ss ~p        (per ~p)~n", [?IND, Dead, I]),
     do_send(#working{origin = Origin,
                      sender = I,
                      waiting_for = Dead,
@@ -155,7 +165,7 @@ process(#timeout{dead = Dead, visited = Visited, attempt = _At, ref = R} = _Msg,
                 id = _I} = State0) ->
     State = add_to_dead(Dead, State0#dstree{waiting_for = undefined}),
     ?DBG("at ~p child timeouted  ~p~n", [_I, Dead]), 
-    io:format("~sx ~p        (per ~p)~n", [?IND, Dead, _I]),
+    ?FLOW("~sx ~p        (per ~p)~n", [?IND, Dead, _I]),
     check(State, m(Visited, [Dead]));
 
 %%
@@ -167,7 +177,7 @@ process(#finished{origin = X, sender = Sender, tree = Tree} = Msg,
                 origin = Origin} = State0) when X == Origin ->
     State = maybe_cancel_wait(Sender, State0),
     ?DBG("at ~p final tree is ~p~n", [I, Tree]),
-    io:format("~s= ~p~n", [?IND, I]),
+    ?FLOW("~s= ~p~n", [?IND, I]),
     broadcast(Msg#finished{sender = I}, State),
     State2 = State#dstree{status = initial, tree = Tree},
     report(State2);
@@ -225,7 +235,7 @@ check(#dstree{id = I,
         [] ->
             if I == Parent -> %% building a tree is done, we are the root!
                     Tree = {I, Subtree},
-                    io:format("final spanning tree: ~p~nVisited: ~p~nNeighbors: ~p~n", [Tree, Visited, Neighbors]),
+                    ?DBG("final spanning tree: ~p~nVisited: ~p~nNeighbors: ~p~n", [Tree, Visited, Neighbors]),
                     State2 = broadcast(#finished{origin = Origin, sender = I, tree = Tree}, State),
                     State3 = State2#dstree{status = initial, tree = Tree},
                     undefined = State3#dstree.waiting_for,
@@ -236,14 +246,14 @@ check(#dstree{id = I,
                                              visited = Visited,
                                              subtree = orddict:from_list([{I, Subtree}])},
                                      Parent, State),
-                    io:format("~s^ ~p -> ~p~n", [?IND, I, Parent]),
+                    ?FLOW("~s^ ~p -> ~p~n", [?IND, I, Parent]),
                     wait(Parent, Visited, State2#dstree{status = finishing})
             end;
         [J | _] ->
             ?DBG("~p is not done: ~p - ~p = ~p~n", [I, Neighbors, Visited, Unvisited]),
             State2 = do_send(#forward{origin = Origin, sender = I, visited = Visited, depth = D + 1},
                              J, State),
-            io:format("~sc ~p -> ~p~n", [?IND, I, J]),
+            ?FLOW("~sc ~p -> ~p~n", [?IND, I, J]),
             wait(J, Visited, State2#dstree{status = waiting})
     end.
 
